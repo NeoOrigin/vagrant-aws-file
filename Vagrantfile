@@ -186,9 +186,15 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     # Proxy Setup
 
     unless userConfig[ "proxy" ].nil?
-        config.proxy.http     = userConfig[ "proxy" ]
-        config.proxy.https    = userConfig[ "proxy" ]
-        config.proxy.no_proxy = "localhost,127.0.0.1"
+	
+	# Set proxy if one is defined and the plugin is installed
+        if Vagrant.has_plugin?( "vagrant-proxyconf" )
+            config.proxy.http     = userConfig[ "proxy" ]
+            config.proxy.https    = userConfig[ "proxy" ]
+            config.proxy.ftp      = userConfig[ "proxy" ]
+            config.proxy.no_proxy = "localhost,127.0.0.1"
+	end
+	
     end
 
 
@@ -209,10 +215,10 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
         end
 
         # Instance settings
-	    aws.ami                       = userConfig[ "ami"            ]
+        aws.ami                       = userConfig[ "ami"            ]
         aws.associate_public_ip       = userConfig[ "publicIP"       ]
         aws.aws_profile               = userConfig[ "profile"        ]
-	    aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
+        aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
         aws.instance_type             = userConfig[ "instanceType"   ]
         aws.keypair_name              = userConfig[ "keypair"        ]
         aws.security_groups           = userConfig[ "securityGroups" ]
