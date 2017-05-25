@@ -17,12 +17,15 @@ userConfig = {
     "box"            => 'aws-dummy',
     "config"         => nil,
     "elasticIP"      => false,
+    "ftpProxy"       => nil,
+    "httpProxy"      => nil,
+    "httpsProxy"     => nil,
     "iamRole"        => nil,
     "instanceType"   => 't2.micro',
     "keypair"        => 'ec2-keypair',
     "name"           => nil,
+    "noProxy"        => 'localhost,127.0.0.1'
     "profile"        => 'default',
-    "proxy"          => nil,
     "publicIP"       => false,
     "securityGroups" => '',
     "sshUser"        => 'ec2-user',
@@ -68,12 +71,15 @@ opts = GetoptLong.new(
     [ '--box',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--config',                GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--elastic-ip',            GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--ftp-proxy',             GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--http-proxy',            GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--https-proxy',           GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--iam-role',              GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--instance-type',         GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--keypair',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--name',                  GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--no-proxy',              GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--profile',               GetoptLong::OPTIONAL_ARGUMENT ],
-    [ '--proxy',                 GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--public-ip',             GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--security-groups',       GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--subnet',                GetoptLong::OPTIONAL_ARGUMENT ],
@@ -101,6 +107,12 @@ opts.each do |opt, arg|
             userConfig[ "config"         ] = File.expand_path( arg )
         when '--elastic-ip'
             userConfig[ "elasticIP"      ] = arg
+        when '--ftp-proxy'
+            userConfig[ "ftpProxy"       ] = arg
+        when '--http-proxy'
+            userConfig[ "httpProxy"      ] = arg
+        when '--https-proxy'
+            userConfig[ "httpsProxy"     ] = arg
         when '--iam-role'
             userConfig[ "iamRole"        ] = arg
         when '--instance-type'
@@ -109,10 +121,10 @@ opts.each do |opt, arg|
             userConfig[ "keypair"        ] = arg
         when '--name'
             userConfig[ "name"           ] = arg
+        when '--no-proxy'
+            userConfig[ "noProxy"        ] = arg
         when '--profile'
             userConfig[ "profile"        ] = arg
-        when '--proxy'
-            userConfig[ "proxy"          ] = arg
         when '--public-ip'
             userConfig[ "publicIP"       ] = arg
         when '--security-groups'
@@ -185,16 +197,24 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     ##############################################################
     # Proxy Setup
 
-    unless userConfig[ "proxy" ].nil?
+    if Vagrant.has_plugin?( "vagrant-proxyconf" )
 	
 	# Set proxy if one is defined and the plugin is installed
-        if Vagrant.has_plugin?( "vagrant-proxyconf" )
-            config.proxy.http     = userConfig[ "proxy" ]
-            config.proxy.https    = userConfig[ "proxy" ]
-            config.proxy.ftp      = userConfig[ "proxy" ]
-            config.proxy.no_proxy = "localhost,127.0.0.1"
+        unless userConfig[ "ftpProxy" ].nil?
+            config.proxy.ftp      = userConfig[ "ftpProxy"   ]
 	end
 	
+        unless userConfig[ "httpProxy" ].nil?
+            config.proxy.http     = userConfig[ "httpProxy"  ]
+	end
+	
+        unless userConfig[ "httpsProxy" ].nil?
+            config.proxy.https    = userConfig[ "httpsProxy" ]
+	end
+
+	unless userConfig[ "noProxy" ].nil?
+            config.proxy.no_proxy = userConfig[ "noProxy"    ]
+	end
     end
 
 
