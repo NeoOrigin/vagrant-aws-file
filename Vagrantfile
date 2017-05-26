@@ -62,6 +62,7 @@ opts = GetoptLong.new(
     [ '--entry-point',           GetoptLong::NO_ARGUMENT ],
     [ '--plugin-source',         GetoptLong::NO_ARGUMENT ],
     [ '--plugin-version',        GetoptLong::NO_ARGUMENT ],
+    [ '--prune',                 GetoptLong::NO_ARGUMENT ],
     [ '--debug',                 GetoptLong::NO_ARGUMENT ],
 
     ##
@@ -199,22 +200,22 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
     if Vagrant.has_plugin?( "vagrant-proxyconf" )
 	
-	# Set proxy if one is defined and the plugin is installed
+        # Set proxy if one is defined and the plugin is installed
         unless userConfig[ "ftpProxy" ].nil?
             config.proxy.ftp      = userConfig[ "ftpProxy"   ]
-	end
+	    end
 	
         unless userConfig[ "httpProxy" ].nil?
             config.proxy.http     = userConfig[ "httpProxy"  ]
-	end
+	    end
 	
         unless userConfig[ "httpsProxy" ].nil?
             config.proxy.https    = userConfig[ "httpsProxy" ]
-	end
+	    end
 
-	unless userConfig[ "noProxy" ].nil?
+	    unless userConfig[ "noProxy" ].nil?
             config.proxy.no_proxy = userConfig[ "noProxy"    ]
-	end
+	    end
     end
 
 
@@ -222,73 +223,77 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     # Aws Setup
 
     config.vm.box = userConfig[ "box" ]
+    
+    config.vm.define userConfig[ "name" ] do |mybox|
 
-    config.vm.provider :aws do |aws, override|
+        mybox.vm.provider :aws do |aws, override|
 
-        # ssh settings
-        override.ssh.username = userConfig[ "sshUser" ]
+            # ssh settings
+            override.ssh.username = userConfig[ "sshUser" ]
         
-        # Use a private key file based on the keypair name if possible
-        private_key_path = File.expand_path( userConfig[ "sshDir"  ] + "/" + userConfig[ "keypair" ] + ".pem" )
-        if File.exist?( private_key_path )
-            override.ssh.private_key_path = private_key_path
+            # Use a private key file based on the keypair name if possible
+            private_key_path = File.expand_path( userConfig[ "sshDir"  ] + "/" + userConfig[ "keypair" ] + ".pem" )
+            if File.exist?( private_key_path )
+                override.ssh.private_key_path = private_key_path
+            end
+
+            # Instance settings
+            aws.ami                       = userConfig[ "ami"            ]
+            aws.associate_public_ip       = userConfig[ "publicIP"       ]
+            aws.aws_profile               = userConfig[ "profile"        ]
+            aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
+            aws.instance_type             = userConfig[ "instanceType"   ]
+            aws.keypair_name              = userConfig[ "keypair"        ]
+            aws.security_groups           = userConfig[ "securityGroups" ]
+            aws.subnet_id                 = userConfig[ "subnet"         ]
+            aws.user_data                 = userConfig[ "userData"       ]
+            aws.elastic_ip                = userConfig[ "elasticIP"      ]
+        
+            # Having a Name tag has special meaning to the console, so we provide custom support
+            tags = userConfig[ 'tags' ]
+            unless tags.nil?
+                tags = { 'Name' => userConfig[ 'name' ] }.merge( userConfig[ 'tags' ] )
+            end
+        
+            aws.tags                      = tags
+        
+            # Always connect via private ip, ie through a vpn
+            aws.ssh_host_attribute        = :private_ip_address
+
         end
 
-        # Instance settings
-        aws.ami                       = userConfig[ "ami"            ]
-        aws.associate_public_ip       = userConfig[ "publicIP"       ]
-        aws.aws_profile               = userConfig[ "profile"        ]
-        aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
-        aws.instance_type             = userConfig[ "instanceType"   ]
-        aws.keypair_name              = userConfig[ "keypair"        ]
-        aws.security_groups           = userConfig[ "securityGroups" ]
-        aws.subnet_id                 = userConfig[ "subnet"         ]
-        aws.user_data                 = userConfig[ "userData"       ]
-        aws.elastic_ip                = userConfig[ "elasticIP"      ]
-        
-        # Having a Name tag has special meaning to the console, so we provide custom support
-        tags = userConfig[ 'tags' ]
-        unless tags.nil?
-            tags = { 'Name' => userConfig[ 'name' ] }.merge( userConfig[ 'tags' ] )
-        end
-        
-        aws.tags                      = tags
-        
-        # Always connect via private ip, ie through a vpn
-        aws.ssh_host_attribute        = :private_ip_address
 
-    end
+        ##############################################################
+        # Provision
 
-
-    ##############################################################
-    # Provision
-
-    # Provision using a local shell script if one exists
-    if File.exist?( "./provision/shell/run-once.sh" )
-        config.vm.provision "shell", path: "./provision/shell/run-once.sh",  privileged: true
-    end
-
-    if File.exist?( "./provision/shell/run-every.sh" )
-        config.vm.provision "shell", path: "./provision/shell/run-every.sh", privileged: true, run: "always"
-    end
-
-    # Provision using ansible_local if exists
-    if File.exist?( "./provision/ansible_local/run-once.yml" )
-
-        config.vm.provision "ansible_local" do |ansible|
-            ansible.playbook  = "./provision/ansible_local/run-once.yml"
-            ansible.sudo      = true
+        # Provision using a local shell script if one exists
+        if File.exist?( "./provision/shell/run-once.sh" )
+            mybox.vm.provision "shell", path: "./provision/shell/run-once.sh",  privileged: true
         end
 
-    end
-
-    if File.exist?( "./provision/ansible_local/run-every.yml" )
-
-        config.vm.provision "ansible_local", run: "always" do |ansible|
-            ansible.playbook  = "./provision/ansible_local/run-every.yml"
-            ansible.sudo      = true
+        if File.exist?( "./provision/shell/run-every.sh" )
+            mybox.vm.provision "shell", path: "./provision/shell/run-every.sh", privileged: true, run: "always"
         end
 
+        # Provision using ansible_local if exists
+        if File.exist?( "./provision/ansible_local/run-once.yml" )
+
+            mybox.vm.provision "ansible_local" do |ansible|
+                ansible.playbook  = "./provision/ansible_local/run-once.yml"
+                ansible.sudo      = true
+            end
+
+        end
+
+        if File.exist?( "./provision/ansible_local/run-every.yml" )
+
+            mybox.vm.provision "ansible_local", run: "always" do |ansible|
+                ansible.playbook  = "./provision/ansible_local/run-every.yml"
+                ansible.sudo      = true
+            end
+
+        end
+    
     end
 
 end
