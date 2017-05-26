@@ -31,6 +31,7 @@ userConfig = {
     "sshUser"        => 'ec2-user',
     "sshDir"         => '~/.ssh',
     "subnet"         => nil,
+    "sudo"           => false,
     "userData"       => nil,
     "tags"           => {}
 }
@@ -86,6 +87,7 @@ opts = GetoptLong.new(
     [ '--subnet',                GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--ssh-user',              GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--ssh-dir',               GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--sudo',                  GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--tags',                  GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--user-data',             GetoptLong::OPTIONAL_ARGUMENT ]
 )
@@ -136,6 +138,8 @@ opts.each do |opt, arg|
             userConfig[ "sshUser"        ] = arg
         when '--subnet'
             userConfig[ "subnet"         ] = arg
+        when '--sudo'
+            userConfig[ "sudo"           ] = arg
         when '--tags'
             newTags = nil
 
@@ -268,11 +272,11 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
         # Provision using a local shell script if one exists
         if File.exist?( "./provision/shell/run-once.sh" )
-            mybox.vm.provision "shell", path: "./provision/shell/run-once.sh",  privileged: true
+            mybox.vm.provision "shell", path: "./provision/shell/run-once.sh",  privileged: userConfig[ "sudo" ]
         end
 
         if File.exist?( "./provision/shell/run-every.sh" )
-            mybox.vm.provision "shell", path: "./provision/shell/run-every.sh", privileged: true, run: "always"
+            mybox.vm.provision "shell", path: "./provision/shell/run-every.sh", privileged: userConfig[ "sudo" ], run: "always"
         end
 
         # Provision using ansible_local if exists
@@ -280,7 +284,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
             mybox.vm.provision "ansible_local" do |ansible|
                 ansible.playbook  = "./provision/ansible_local/run-once.yml"
-                ansible.sudo      = true
+                ansible.sudo      = userConfig[ "sudo" ]
             end
 
         end
@@ -289,7 +293,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
             mybox.vm.provision "ansible_local", run: "always" do |ansible|
                 ansible.playbook  = "./provision/ansible_local/run-every.yml"
-                ansible.sudo      = true
+                ansible.sudo      = userConfig[ "sudo" ]
             end
 
         end
