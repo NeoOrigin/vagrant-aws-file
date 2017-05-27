@@ -17,6 +17,7 @@ userConfig = {
     "box"            => 'aws-dummy',
     "config"         => nil,
     "elasticIP"      => false,
+    "elb"            => nil,
     "ftpProxy"       => nil,
     "httpProxy"      => nil,
     "httpsProxy"     => nil,
@@ -75,6 +76,7 @@ opts = GetoptLong.new(
     [ '--box',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--config',                GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--elastic-ip',            GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--elb',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--ftp-proxy',             GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--http-proxy',            GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--https-proxy',           GetoptLong::OPTIONAL_ARGUMENT ],
@@ -118,6 +120,8 @@ opts.each do |opt, arg|
             userConfig[ "config"         ] = File.expand_path( arg )
         when '--elastic-ip'
             userConfig[ "elasticIP"      ] = arg
+        when '--elb'
+            userConfig[ "elb"            ] = arg
         when '--ftp-proxy'
             userConfig[ "ftpProxy"       ] = arg
         when '--http-proxy'
@@ -257,6 +261,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.ami                       = userConfig[ "ami"            ]
             aws.associate_public_ip       = userConfig[ "publicIP"       ]
             aws.aws_profile               = userConfig[ "profile"        ]
+            aws.elb                       = userConfig[ "elb"            ]
             aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
             aws.instance_type             = userConfig[ "instanceType"   ]
             aws.keypair_name              = userConfig[ "keypair"        ]
