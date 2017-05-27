@@ -33,6 +33,7 @@ userConfig = {
     "sshDir"         => '~/.ssh',
     "subnet"         => nil,
     "sudo"           => false,
+    "tenancy"        => 'default',
     "userData"       => nil,
     "tags"           => {}
 }
@@ -91,6 +92,7 @@ opts = GetoptLong.new(
     [ '--ssh-dir',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--sudo',                  GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--tags',                  GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--tenancy',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--user-data',             GetoptLong::OPTIONAL_ARGUMENT ]
 )
 
@@ -148,6 +150,8 @@ opts.each do |opt, arg|
             userConfig[ "subnet"         ] = arg
         when '--sudo'
             userConfig[ "sudo"           ] = arg
+        when '--tenancy'
+            userConfig[ "tenancy"        ] = arg
         when '--tags'
             newTags = nil
 
@@ -259,6 +263,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.monitoring                = userConfig[ "monitoring"     ]
             aws.security_groups           = userConfig[ "securityGroups" ]
             aws.subnet_id                 = userConfig[ "subnet"         ]
+            aws.tenancy                   = userConfig[ "tenancy"        ]
             aws.user_data                 = userConfig[ "userData"       ]
             aws.elastic_ip                = userConfig[ "elasticIP"      ]
         
