@@ -13,7 +13,7 @@ require 'yaml'
 # config.(json|yml) in the same directory
 
 userConfig = {
-    "ami"            => 'unknown',
+    "ami"            => nil,
     "box"            => 'aws-dummy',
     "config"         => nil,
     "elasticIP"      => false,
@@ -26,7 +26,7 @@ userConfig = {
     "keypair"        => 'ec2-keypair',
     "name"           => nil,
     "noProxy"        => 'localhost,127.0.0.1'
-    "monitoring"     => false,
+    "monitor"        => false,
     "profile"        => 'default',
     "publicIP"       => false,
     "securityGroups" => '',
@@ -38,6 +38,33 @@ userConfig = {
     "userData"       => nil,
     "tags"           => {}
 }
+
+#########################################################################################
+
+def load_file( data )
+    res = nil
+
+    if data.start_with?( 'file://' )
+        res = YAML.load_file( File.expand_path( data[  7, data.length ] ) )
+    elsif data.start_with?( 'yamlfile://' )
+        res = YAML.load_file( File.expand_path( data[ 11, data.length ] ) )
+    elsif data.start_with?( 'yaml://' )
+        res = YAML.load( data[ 7, data.length ] )
+    elsif data.start_with?( 'jsonfile://' )
+        res = JSON.parse( File.read( File.expand_path( data[ 11, data.length ] ) ) )
+    elsif data.start_with?( 'json://' )
+        res = JSON.parse( data[ 7, data.length ] )
+    elsif data.start_with?( 'rawfile://' )
+        res = File.read( File.expand_path( data[ 10, data.length ] ) )
+    elsif data.start_with?( 'raw://' )
+        res = data[ 6, data.length ]
+    else
+        res = YAML.load( data ) 
+    end
+    
+    return res
+end
+
 
 #########################################################################################
 
@@ -99,13 +126,13 @@ opts = GetoptLong.new(
 )
 
 # load from config file/s if exists, before we look at command line
-[ ".", "./config" ].each |folder|
+[ ".", "./config" ].each do |folder|
 
     if File.exist?( folder + "/config.json" )
-        userConfig = userConfig.merge( JSON.parse( FILE.read( folder + "/config.json" ) ) )
+        userConfig = userConfig.merge( load_file( "jsonfile://" + folder + "/config.json" ) )
     end
     if File.exist?( folder + "/config.yml" )
-        userConfig = userConfig.merge( YAML.load_file( folder + "/config.yml" ) )
+        userConfig = userConfig.merge( load_file( "yamlfile://" + folder + "/config.yml" ) )
     end
 
 end
@@ -139,7 +166,7 @@ opts.each do |opt, arg|
         when '--no-proxy'
             userConfig[ "noProxy"        ] = arg
         when '--monitor'
-            userConfig[ "monitoring"     ] = arg
+            userConfig[ "monitor"        ] = arg
         when '--profile'
             userConfig[ "profile"        ] = arg
         when '--public-ip'
@@ -157,52 +184,23 @@ opts.each do |opt, arg|
         when '--tenancy'
             userConfig[ "tenancy"        ] = arg
         when '--tags'
-            newTags = nil
-
-            if arg.start_with?( 'file://' )
-                newTags = YAML.load_file( File.expand_path( arg[  7, arg.length ] ) )
-            elsif arg.start_with?( 'yamlfile://' )
-                newTags = YAML.load_file( File.expand_path( arg[ 11, arg.length ] ) )
-            elsif arg.start_with?( 'yaml://' )
-                newTags = YAML.load( arg[ 7, arg.length ] )
-            elsif arg.start_with?( 'jsonfile://' )
-                newTags = JSON.parse( File.read( File.expand_path( arg[ 11, arg.length ] ) ) )
-            elsif arg.start_with?( 'json://' )
-                newTags = JSON.parse( arg[ 7, arg.length ] )
-            else
-                newTags = YAML.load( arg ) 
-            end
+            newTags = load_file( arg )
 
             userConfig[ "tags" ] = userConfig[ "tags" ].merge( newTags )
         when '--user-data'
             if arg.start_with?( 'file://' )
-                userConfig[ "userData" ] = File.read( File.expand_path( arg[ 7, arg.length ] ) )
+                prefix = "rawfile://"
             else
-                userConfig[ "userData" ] = arg
+                prefix = "raw://"
             end
+            
+            userConfig[ "userData" ] = load_file( prefix + arg )
     end
 end
 
 # Check if a custom config passed in
 unless userConfig[ "config" ].nil?
-
-    newPath   = userConfig[ "config" ]
-    newConfig = nil
-    
-    if newPath.start_with?( 'file://' )
-        newConfig = YAML.load_file( File.expand_path( newPath[ 7, newPath.length ] ) )
-    elsif newPath.start_with?( 'yamlfile://' )
-        newConfig = YAML.load_file( File.expand_path( newPath[ 11, newPath.length ] ) )
-    elsif newPath.start_with?( 'yaml://' )
-        newConfig = YAML.load( newPath[ 7, arg.length ] )
-    elsif newPath.start_with?( 'jsonfile://' )
-        newConfig = JSON.parse( FILE.read( File.expand_path( newPath[ 11, newPath.length ] ) ) )
-    elsif newPath.start_with?( 'json://' )
-        newConfig = JSON.parse( newPath[ 7, newPath.length ] )
-    else
-        newConfig = YAML.load( newPath ) 
-    end
-
+    newConfig  = load_file( userConfig[ "config" ] )
     userConfig = userConfig.merge( newConfig )
 end
 
@@ -265,7 +263,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
             aws.instance_type             = userConfig[ "instanceType"   ]
             aws.keypair_name              = userConfig[ "keypair"        ]
-            aws.monitoring                = userConfig[ "monitoring"     ]
+            aws.monitoring                = userConfig[ "monitor"        ]
             aws.security_groups           = userConfig[ "securityGroups" ]
             aws.subnet_id                 = userConfig[ "subnet"         ]
             aws.tenancy                   = userConfig[ "tenancy"        ]
