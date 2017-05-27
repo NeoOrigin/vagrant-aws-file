@@ -25,6 +25,7 @@ userConfig = {
     "keypair"        => 'ec2-keypair',
     "name"           => nil,
     "noProxy"        => 'localhost,127.0.0.1'
+    "monitoring"     => false,
     "profile"        => 'default',
     "publicIP"       => false,
     "securityGroups" => '',
@@ -81,6 +82,7 @@ opts = GetoptLong.new(
     [ '--keypair',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--name',                  GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--no-proxy',              GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--monitor',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--profile',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--public-ip',             GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--security-groups',       GetoptLong::OPTIONAL_ARGUMENT ],
@@ -126,6 +128,8 @@ opts.each do |opt, arg|
             userConfig[ "name"           ] = arg
         when '--no-proxy'
             userConfig[ "noProxy"        ] = arg
+        when '--monitor'
+            userConfig[ "monitoring"     ] = arg
         when '--profile'
             userConfig[ "profile"        ] = arg
         when '--public-ip'
@@ -248,6 +252,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
             aws.instance_type             = userConfig[ "instanceType"   ]
             aws.keypair_name              = userConfig[ "keypair"        ]
+            aws.monitoring                = userConfig[ "monitoring"     ]
             aws.security_groups           = userConfig[ "securityGroups" ]
             aws.subnet_id                 = userConfig[ "subnet"         ]
             aws.user_data                 = userConfig[ "userData"       ]
