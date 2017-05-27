@@ -95,11 +95,15 @@ opts = GetoptLong.new(
 )
 
 # load from config file/s if exists, before we look at command line
-if File.exist?( "./config.json" )
-    userConfig = userConfig.merge( JSON.parse( FILE.read( "./config.json" ) ) )
-end
-if File.exist?( "./config.yml" )
-    userConfig = userConfig.merge( YAML.load_file( "./config.yml" ) )
+[ ".", "./config" ].each |folder|
+
+    if File.exist?( folder + "/config.json" )
+        userConfig = userConfig.merge( JSON.parse( FILE.read( folder + "/config.json" ) ) )
+    end
+    if File.exist?( folder + "/config.yml" )
+        userConfig = userConfig.merge( YAML.load_file( folder + "/config.yml" ) )
+    end
+
 end
 
 opts.each do |opt, arg|
