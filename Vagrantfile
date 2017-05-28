@@ -16,6 +16,7 @@ userConfig = {
     "ami"            => nil,
     "box"            => 'aws-dummy',
     "config"         => nil,
+    "connectWith"    => "publicIP",
     "elasticIP"      => false,
     "elb"            => nil,
     "ftpProxy"       => nil,
@@ -41,12 +42,42 @@ userConfig = {
 
 #########################################################################################
 
-def load_file( data )
-    res = nil
+def load_file( data, default_format = "yaml" )
+    res        = nil
+    guess_file = false
+    
+    # Add format if we know its a file and not a raw string
+    if File.exists?( File.expand_path( data ) )
+        guess_file = true
+    elsif data.start_with?( 'file://' )
+        guess_file = true
+        data = data[ 7, data.length ]
+    end
+    
+    # we know its a file but not sure what..
+    if guess_file
+    
+        data = File.expand_path( data )
+        
+        # check extension if that not clear use default
+        if data.end_with?( ".yml" )
+            data = "yamlfile://" + data
+        elsif data.end_with?( ".yaml" )
+            data = "yamlfile://" + data
+        elsif data.end_with?( ".json" )
+            data = "jsonfile://" + data
+        elsif default_format == "yaml"
+            data = "yamlfile://" + data
+        elsif default_format == "json"
+            data = "jsonfile://" + data
+        else
+            data = "rawfile://"  + data
+        end
+        
+    end
 
-    if data.start_with?( 'file://' )
-        res = YAML.load_file( File.expand_path( data[  7, data.length ] ) )
-    elsif data.start_with?( 'yamlfile://' )
+    # we should have correctly prefixed at this point
+    if data.start_with?( 'yamlfile://' )
         res = YAML.load_file( File.expand_path( data[ 11, data.length ] ) )
     elsif data.start_with?( 'yaml://' )
         res = YAML.load( data[ 7, data.length ] )
@@ -59,7 +90,7 @@ def load_file( data )
     elsif data.start_with?( 'raw://' )
         res = data[ 6, data.length ]
     else
-        res = YAML.load( data ) 
+        res = data
     end
     
     return res
@@ -102,6 +133,7 @@ opts = GetoptLong.new(
     [ '--ami',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--box',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--config',                GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--connect-with',          GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--elastic-ip',            GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--elb',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--ftp-proxy',             GetoptLong::OPTIONAL_ARGUMENT ],
@@ -126,25 +158,34 @@ opts = GetoptLong.new(
 )
 
 # load from config file/s if exists, before we look at command line
+# yml takes precedence, whereas subdirectories override
 [ ".", "./config" ].each do |folder|
 
+    confPath = nil
+    
     if File.exist?( folder + "/config.json" )
-        userConfig = userConfig.merge( load_file( "jsonfile://" + folder + "/config.json" ) )
+        confPath = "jsonfile://" + folder + "/config.json"
     end
     if File.exist?( folder + "/config.yml" )
-        userConfig = userConfig.merge( load_file( "yamlfile://" + folder + "/config.yml" ) )
+        confPath = "yamlfile://" + folder + "/config.yml"
+    end
+    
+    unless confPath.nil?
+        userConfig = userConfig.merge( load_file( confPath ) )
     end
 
 end
 
 opts.each do |opt, arg|
     case opt
+        when '--config'
+            userConfig = userConfig.merge( load_file( arg ) )
         when '--ami'
             userConfig[ "ami"            ] = arg
         when '--box'
             userConfig[ "box"            ] = arg
-        when '--config'
-            userConfig[ "config"         ] = File.expand_path( arg )
+        when '--connect-with'
+            userConfig[ "connectWith"    ] = arg
         when '--elastic-ip'
             userConfig[ "elasticIP"      ] = arg
         when '--elb'
@@ -184,24 +225,18 @@ opts.each do |opt, arg|
         when '--tenancy'
             userConfig[ "tenancy"        ] = arg
         when '--tags'
-            newTags = load_file( arg )
+            newTags = load_file( arg, "yaml" )
 
             userConfig[ "tags" ] = userConfig[ "tags" ].merge( newTags )
         when '--user-data'
             if arg.start_with?( 'file://' )
-                prefix = "rawfile://"
+                prefix = "raw"
             else
                 prefix = "raw://"
             end
             
-            userConfig[ "userData" ] = load_file( prefix + arg )
+            userConfig[ "userData" ] = load_file( prefix + arg, "raw" )
     end
-end
-
-# Check if a custom config passed in
-unless userConfig[ "config" ].nil?
-    newConfig  = load_file( userConfig[ "config" ] )
-    userConfig = userConfig.merge( newConfig )
 end
 
 
@@ -279,7 +314,14 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.tags                      = tags
         
             # Always connect via private ip, ie through a vpn
-            aws.ssh_host_attribute        = :private_ip_address
+            case userConfig[ "connectWith" ]
+            when "privateIP"
+                aws.ssh_host_attribute        = :private_ip_address
+            when "dns"
+                aws.ssh_host_attribute        = :dns_name
+            else
+                aws.ssh_host_attribute        = :public_ip_address
+            end
 
         end
 
