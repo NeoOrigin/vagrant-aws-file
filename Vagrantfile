@@ -30,6 +30,7 @@ userConfig = {
     "noProxy"        => 'localhost,127.0.0.1'
     "monitor"        => false,
     "profile"        => 'default',
+    "protocol"       => 'ssh',
     "publicIP"       => false,
     "securityGroups" => '',
     "sshUser"        => 'ec2-user',
@@ -148,6 +149,7 @@ opts = GetoptLong.new(
     [ '--no-proxy',              GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--monitor',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--profile',               GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--protocol',              GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--public-ip',             GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--security-groups',       GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--subnet',                GetoptLong::OPTIONAL_ARGUMENT ],
@@ -214,6 +216,8 @@ opts.each do |opt, arg|
             userConfig[ "monitor"        ] = arg
         when '--profile'
             userConfig[ "profile"        ] = arg
+        when '--protocol'
+            userConfig[ "protocol"       ] = arg
         when '--public-ip'
             userConfig[ "publicIP"       ] = arg
         when '--security-groups'
@@ -252,6 +256,20 @@ VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
+    # merge in .env files as a last resort
+    if Vagrant.has_plugin?( "vagrant-env" )
+        config.env.enable
+        
+        userConfig = userConfig.merge( ENV )
+    end
+    
+
+    case userConfig[ "protocol" ]
+    when 'winrm'
+        config.vm.communicator = "winrm"
+    else
+        config.vm.communicator = "ssh"
+    end
     ##############################################################
     # Proxy Setup
 
@@ -283,10 +301,23 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     config.vm.define userConfig[ "name" ] do |mybox|
 
+        case userConfig[ "protocol" ]
+        when 'winrm'
+            config.vm.guest = :windows
+        else
+            config.vm.guest = :linux
+        end
+        
         mybox.vm.provider :aws do |aws, override|
 
-            # ssh settings
-            override.ssh.username = userConfig[ "sshUser" ]
+            # connection settings
+            case userConfig[ "protocol" ]
+            when 'winrm'
+                override.winrm.username = "Administrator"
+                override.winrm.password = :aws
+            else
+                override.ssh.username = userConfig[ "sshUser" ]
+            end
         
             # Use a private key file based on the keypair name if possible
             private_key_path = File.expand_path( userConfig[ "sshDir"  ] + "/" + userConfig[ "keypair" ] + ".pem" )
@@ -299,6 +330,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.associate_public_ip       = userConfig[ "publicIP"       ]
             aws.aws_profile               = userConfig[ "profile"        ]
             aws.ebs_optimized             = userConfig[ "ebsOptimize"    ]
+            aws.elastic_ip                = userConfig[ "elasticIP"      ]
             aws.elb                       = userConfig[ "elb"            ]
             aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
             aws.instance_type             = userConfig[ "instanceType"   ]
@@ -307,8 +339,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             aws.security_groups           = userConfig[ "securityGroups" ]
             aws.subnet_id                 = userConfig[ "subnet"         ]
             aws.tenancy                   = userConfig[ "tenancy"        ]
-            aws.user_data                 = userConfig[ "userData"       ]
-            aws.elastic_ip                = userConfig[ "elasticIP"      ]
+            
         
             # Having a Name tag has special meaning to the console, so we provide custom support
             tags = userConfig[ 'tags' ]
@@ -326,6 +357,19 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                 aws.ssh_host_attribute        = :dns_name
             else
                 aws.ssh_host_attribute        = :public_ip_address
+            end
+            
+            case userConfig[ "protocol" ]
+            when 'winrm'
+                
+                aws.user_data = <<-USERDATA
+                  <powershell>
+                    Enable-PSRemoting -Force
+                    netsh advfirewall firewall add rule name="WinRM HTTP" dir=in localport=5985 protocol=TCP action=allow
+                  </powershell>
+                USERDATA
+            else
+                aws.user_data = userConfig[ "userData"       ]
             end
 
         end
