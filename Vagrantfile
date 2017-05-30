@@ -60,7 +60,19 @@ end
 # +mybox+:: The box definition we are working on
 # +userConfig+:: +Hash+ object representing the configuration for the underlying instance
 def run_vbox_provider( mybox, userConfig = {} )
-    puts "Virtualbox provider is Not Implemented yet "
+    puts "Virtualbox provider is Not Implemented yet"
+    
+    mybox.vm.provider :virtualbox do |vbox, override|
+        
+        vbox.gui          = userConfig[ "gui" ]
+        vbox.linked_clone = true
+        
+        vbox.customize ["modifyvm", :id, "--cpuexecutioncap", "50"]
+        
+        vbox.memory       = 2048
+        vbox.cpus         = 2
+        
+    end  # END VBOX provider
 end
 
 # Creates An AWS resource
@@ -403,6 +415,50 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     # Determine communication to use
     config.vm.communicator = userConfig[ "protocol" ]
 
+    matched = false
+    
+    %w( sh ps1 bat ).each do |extension|
+        
+        script_path = File.join( ".", "deploy.#{extension}" )
+        
+        if File.exist?( script_path )
+    
+            config.push.define "local-exec" do |push|
+                push.script = script_path
+            end
+            
+            matched = true
+            
+        end
+    
+    end
+    
+    %w( yml yaml json ).each do |extension|
+        
+        script_path = File.join( ".", "deploy.#{extension}" )
+        
+        if File.exist?( script_path )
+    
+            pushConfig = load_file( script_path, extension )
+        
+            config.push.define "ftp" do |push|
+                push.host        = pushConfig[ "host"        ]
+                push.username    = pushConfig[ "username"    ]
+                push.password    = pushConfig[ "password"    ]
+                push.secure      = pushConfig[ "secure"      ]
+                push.destination = pushConfig[ "destination" ]
+                push.source      = pushConfig[ "source"      ]
+                #passive
+                #exclude
+                #include
+            end
+            
+            matched = true
+            
+        end
+    
+    end
+    
     
     ##############################################################
     # Proxy Setup
