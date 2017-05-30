@@ -414,46 +414,67 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     # Determine communication to use
     config.vm.communicator = userConfig[ "protocol" ]
-
-    matched = false
     
     %w( sh ps1 bat ).each do |extension|
         
-        script_path = File.join( ".", "deploy.#{extension}" )
+        Dir.glob( [
+          File.join( ".", "deploy.*.#{extension}" ),
+          File.join( ".", "deploy.#{extension}" )
+        ] ) do |script_path|
         
-        if File.exist?( script_path )
+            if File.exist?( script_path )
     
-            config.push.define "local-exec" do |push|
-                push.script = script_path
-            end
+                config.push.define "local-exec" do |push|
+                    push.script = script_path
+                end
             
-            matched = true
+            end
             
         end
     
     end
     
-    %w( yml yaml json ).each do |extension|
+    %w( json yml yaml ).each do |extension|
         
-        script_path = File.join( ".", "deploy.#{extension}" )
+        Dir.glob( [
+          File.join( ".", "deploy.*.#{extension}" ),
+          File.join( ".", "deploy.#{extension}" )
+        ] ) do |script_path|
         
-        if File.exist?( script_path )
+            if File.exist?( script_path )
     
-            pushConfig = load_file( script_path, extension )
+                pushConfig = {
+                    "host"        => nil,
+                    "username"    => userConfig[ "sshUser" ],
+                    "password"    => nil,
+                    "secure"      => true,
+                    "destination" => ".",
+                    "source"      => "."
+                }.merge( load_file( script_path, extension ) )
         
-            config.push.define "ftp" do |push|
-                push.host        = pushConfig[ "host"        ]
-                push.username    = pushConfig[ "username"    ]
-                push.password    = pushConfig[ "password"    ]
-                push.secure      = pushConfig[ "secure"      ]
-                push.destination = pushConfig[ "destination" ]
-                push.source      = pushConfig[ "source"      ]
-                #passive
-                #exclude
-                #include
-            end
+                if pushConfig[ "cmd" ].nil?
             
-            matched = true
+                    config.push.define "ftp" do |push|
+                        push.host        = pushConfig[ "host"        ]
+                        push.username    = pushConfig[ "username"    ]
+                        push.password    = pushConfig[ "password"    ]
+                        push.secure      = pushConfig[ "secure"      ]
+                        push.destination = pushConfig[ "destination" ]
+                        push.source      = pushConfig[ "source"      ]
+                        #passive
+                        #exclude
+                        #include
+                    end
+                
+                else
+                
+                    config.push.define "local-exec" do |push|
+                        push.inline = pushConfig[ "cmd" ] % pushConfig
+                    end
+                
+                end
+                
+            end
             
         end
     
