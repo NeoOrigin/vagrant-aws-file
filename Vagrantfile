@@ -45,6 +45,10 @@ userConfig = {
 
 #########################################################################################
 
+# Standardizes reading data from a file or from a string
+# Params:
+# +data+:: +String+ object that specifies an optional type prefix (of the form yaml:// etc) and the data itself e.g. a file path
+# +default_format+:: +String+ object indicating the format to interpret with if we cannot determine that directly from the data
 def load_file( data, default_format = "yaml" )
     res        = nil
     guess_file = false
@@ -54,7 +58,7 @@ def load_file( data, default_format = "yaml" )
         guess_file = true
     elsif data.start_with?( 'file://' )
         guess_file = true
-        data = data[ 7, data.length ]
+        data       = data[ 7, data.length ]
     end
     
     # we know its a file but not sure what..
@@ -63,13 +67,11 @@ def load_file( data, default_format = "yaml" )
         data = File.expand_path( data )
         
         # check extension if that not clear use default
-        if data.end_with?( ".yml" )
-            data = "yamlfile://" + data
-        elsif data.end_with?( ".yaml" )
+        if data.end_with?( ".yml", ".yaml" )
             data = "yamlfile://" + data
         elsif data.end_with?( ".json" )
             data = "jsonfile://" + data
-        elsif default_format == "yaml"
+        elsif default_format in [ "yml", "yaml" ]
             data = "yamlfile://" + data
         elsif default_format == "json"
             data = "jsonfile://" + data
@@ -80,7 +82,7 @@ def load_file( data, default_format = "yaml" )
     end
 
     # we should have correctly prefixed at this point
-    if data.start_with?( 'yamlfile://' )
+    if    data.start_with?( 'yamlfile://' )
         res = YAML.load_file( File.expand_path( data[ 11, data.length ] ) )
     elsif data.start_with?( 'yaml://' )
         res = YAML.load( data[ 7, data.length ] )
@@ -169,14 +171,18 @@ opts = GetoptLong.new(
 
     confPath = nil
     
-    if File.exist?( folder + "/config.json" )
-        confPath = "jsonfile://" + folder + "/config.json"
-    end
-    if File.exist?( folder + "/config.yml" )
-        confPath = "yamlfile://" + folder + "/config.yml"
+    # Go through supported config types for loading
+    [ "json", "yml", "yaml" ].each do |extension|
+        
+        if File.exist?( File.join( folder, "config." + extension ) )
+            confPath = extension + "file://" + File.join( folder, "config." + extension )
+        end
+        
     end
     
+    # If a config file was found in the root, clean up the prefix before loading in its variables
     unless confPath.nil?
+        confPath   = confPath.sub( /^ymlfile/, "yamlfile" )
         userConfig = userConfig.merge( load_file( confPath ) )
     end
 
@@ -223,7 +229,7 @@ opts.each do |opt, arg|
         when '--public-ip'
             userConfig[ "publicIP"       ] = arg
         when '--run'
-            userConfig[ "run"            ] = arg
+            userConfig[ "run"            ] = File.expand_path( arg.sub( /^file\:\/\//, '' ) )
         when '--security-groups'
             userConfig[ "securityGroups" ] = arg.split( "," )
         when '--ssh-dir'
@@ -242,9 +248,9 @@ opts.each do |opt, arg|
             userConfig[ "tags" ] = userConfig[ "tags" ].merge( newTags )
         when '--user-data'
             if arg.start_with?( 'file://' )
-                prefix = "raw"
+                prefix   = "raw"
             else
-                prefix = "raw://"
+                prefix   = "raw://"
             end
             
             userConfig[ "userData" ] = load_file( prefix + arg, "raw" )
@@ -267,13 +273,10 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
         userConfig = userConfig.merge( ENV )
     end
     
+    # Determine communication to use
+    config.vm.communicator = userConfig[ "protocol" ]
 
-    case userConfig[ "protocol" ]
-    when 'winrm'
-        config.vm.communicator = "winrm"
-    else
-        config.vm.communicator = "ssh"
-    end
+    
     ##############################################################
     # Proxy Setup
 
@@ -282,19 +285,20 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
         # Set proxy if one is defined and the plugin is installed
         unless userConfig[ "ftpProxy" ].nil?
             config.proxy.ftp      = userConfig[ "ftpProxy"   ]
-	    end
+        end
 	
         unless userConfig[ "httpProxy" ].nil?
             config.proxy.http     = userConfig[ "httpProxy"  ]
-	    end
+        end
 	
         unless userConfig[ "httpsProxy" ].nil?
             config.proxy.https    = userConfig[ "httpsProxy" ]
-	    end
+        end
 
-	    unless userConfig[ "noProxy" ].nil?
+        unless userConfig[ "noProxy" ].nil?
             config.proxy.no_proxy = userConfig[ "noProxy"    ]
-	    end
+        end
+        
     end
 
 
@@ -305,6 +309,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     config.vm.define userConfig[ "name" ] do |mybox|
 
+        # Update the underlying os type
         case userConfig[ "protocol" ]
         when 'winrm', 'winssh'
             config.vm.guest = :windows
@@ -312,11 +317,13 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             config.vm.guest = :linux
         end
         
+        # AWS specifics
         mybox.vm.provider :aws do |aws, override|
 
             # connection settings
             case userConfig[ "protocol" ]
             when 'winrm'
+                # For AWS get encrypted password from the admin account
                 override.winrm.username = "Administrator"
                 override.winrm.password = :aws
             else
@@ -324,7 +331,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             end
         
             # Use a private key file based on the keypair name if possible
-            private_key_path = File.expand_path( userConfig[ "sshDir"  ] + "/" + userConfig[ "keypair" ] + ".pem" )
+            private_key_path = File.expand_path( File.join( userConfig[ "sshDir"  ], userConfig[ "keypair" ] + ".pem" ) )
             if File.exist?( private_key_path )
                 override.ssh.private_key_path = private_key_path
             end
@@ -353,7 +360,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
         
             aws.tags                      = tags
         
-            # Always connect via private ip, ie through a vpn
+            # Determine best way to connect, private ip address (i.e. through a vpn) or public etc
             case userConfig[ "connectWith" ]
             when "privateIP"
                 aws.ssh_host_attribute        = :private_ip_address
@@ -366,68 +373,106 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             user_data = userConfig[ "userData" ]
             
             # if winrm we need to ensure we enable it on first boot
-            case userConfig[ "protocol" ]
-            when 'winrm'
+            if userConfig[ "protocol" ] == 'winrm'
                 
-                user_data = <<-USERDATA
-                  <powershell>
-                    Enable-PSRemoting -Force
-                    netsh advfirewall firewall add rule name="WinRM HTTP" dir=in localport=5985 protocol=TCP action=allow
-                  </powershell>
-                USERDATA
+                user_data = <<-END.gsub( /^\s+\|/, '' )
+                  |<powershell>
+                  |  Enable-PSRemoting -Force
+                  |  netsh advfirewall firewall add rule name="WinRM HTTP" dir=in localport=5985 protocol=TCP action=allow
+                  |</powershell>
+                END
+
             end
             
             aws.user_data = user_data
 
-        end
+        end # END AWS provider
 
 
         ##############################################################
         # Provision
         
-        unless userConfig[ "run" ].nil?
-            if File.exist?( userConfig[ "run" ] )
-                if userConfig[ "run" ].end_with( ".sh" )
-                    mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
-                elsif userConfig[ "run" ].end_with( ".yml" )
-                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
-                        ansible.playbook  = userConfig[ "run" ]
+        if userConfig[ "run" ].nil?
+
+            # Keep track of which provision script we are matching
+            matched_once  = false
+            matched_every = false
+
+            [ "sh", "ps1", "bat" ].each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once." + extension )
+
+                # Provision using a local shell script if one exists
+                if File.exist?( script_path ) and !matched_once
+                    mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ]
+                    matched_once = true
+                end
+
+                script_path = File.join( ".", "provision", "shell", "run-every." + extension )
+
+                if File.exist?( script_path ) and !matched_every
+                    mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ], run: "always"
+                    matched_every = true
+                end
+
+            end # END shell provisioner determination
+
+            # Reset
+            matched_once  = false
+            matched_every = false
+
+            [ "yml", "yaml" ].each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once." + extension )
+
+                # Provision using ansible_local if exists
+                if File.exist?( script_path ) and !matched_once
+
+                    mybox.vm.provision "ansible_local" do |ansible|
+                        ansible.playbook  = script_path
                         ansible.sudo      = userConfig[ "sudo" ]
                     end
-                 else
-                     mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+
+                    matched_once = true
                 end
-            end
-        end
 
-        # Provision using a local shell script if one exists
-        if File.exist?( "./provision/shell/run-once.sh" )
-            mybox.vm.provision "shell", path: "./provision/shell/run-once.sh",  privileged: userConfig[ "sudo" ]
-        end
+                script_path = File.join( ".", "provision", "shell", "run-every." + extension )
 
-        if File.exist?( "./provision/shell/run-every.sh" )
-            mybox.vm.provision "shell", path: "./provision/shell/run-every.sh", privileged: userConfig[ "sudo" ], run: "always"
-        end
+                if File.exist?( script_path ) and !matched_every
 
-        # Provision using ansible_local if exists
-        if File.exist?( "./provision/ansible_local/run-once.yml" )
+                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
+                        ansible.playbook  = script_path
+                        ansible.sudo      = userConfig[ "sudo" ]
+                    end
 
-            mybox.vm.provision "ansible_local" do |ansible|
-                ansible.playbook  = "./provision/ansible_local/run-once.yml"
-                ansible.sudo      = userConfig[ "sudo" ]
-            end
+                    matched_every = true
+                end
 
-        end
+            end # END ansible provisioner determination
 
-        if File.exist?( "./provision/ansible_local/run-every.yml" )
+        else
 
-            mybox.vm.provision "ansible_local", run: "always" do |ansible|
-                ansible.playbook  = "./provision/ansible_local/run-every.yml"
-                ansible.sudo      = userConfig[ "sudo" ]
-            end
+            # No custom provisioner option passed in so check for file based existance
+            
+            if File.exist?( userConfig[ "run" ] )
+                
+                if userConfig[ "run" ].end_with( ".yml", ".yaml" )
 
-        end
+                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
+                        ansible.playbook  = userConfig[ "run"  ]
+                        ansible.sudo      = userConfig[ "sudo" ]
+                    end
+
+                elsif userConfig[ "run" ].end_with( ".sh", ".bat", ".ps1" )
+                    mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                end # END provisioner extension check
+            
+            else
+                mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+            end # END provisioner is a file check
+
+        end # END custom provisioner check
     
-    end
+    end # END define
 
-end
+end # END configure
