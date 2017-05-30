@@ -47,6 +47,99 @@ userConfig = {
 
 #########################################################################################
 
+# Creates A Vmware ESX resource
+# Params:
+# +mybox+:: The box definition we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_esx_provider( mybox, userConfig = {} )
+    puts "Vmware provider is Not Implemented yet"
+end
+
+# Creates A Virtualbox resource
+# Params:
+# +mybox+:: The box definition we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_vbox_provider( mybox, userConfig = {} )
+    puts "Virtualbox provider is Not Implemented yet "
+end
+
+# Creates An AWS resource
+# Params:
+# +mybox+:: The box definition we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_aws_provider( mybox, userConfig = {} )
+    
+    # AWS specifics
+    mybox.vm.provider :aws do |aws, override|
+
+        # connection settings
+        case userConfig[ "protocol" ]
+        when 'winrm'
+            # For AWS get encrypted password from the admin account
+            override.winrm.username = "Administrator"
+            override.winrm.password = :aws
+        else
+            override.ssh.username = userConfig[ "sshUser" ]
+        end
+        
+        # Use a private key file based on the keypair name if possible
+        private_key_path = File.expand_path( format( "%s.%s", File.join( userConfig[ "sshDir"  ], userConfig[ "keypair" ] ), "pem" ) )
+        if File.exist?( private_key_path )
+            override.ssh.private_key_path = private_key_path
+        end
+
+        # Instance settings
+        aws.ami                       = userConfig[ "ami"            ]
+        aws.associate_public_ip       = userConfig[ "publicIP"       ]
+        aws.aws_profile               = userConfig[ "profile"        ]
+        aws.ebs_optimized             = userConfig[ "ebsOptimize"    ]
+        aws.elastic_ip                = userConfig[ "elasticIP"      ]
+        aws.elb                       = userConfig[ "elb"            ]
+        aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
+        aws.instance_type             = userConfig[ "instanceType"   ]
+        aws.keypair_name              = userConfig[ "keypair"        ]
+        aws.monitoring                = userConfig[ "monitor"        ]
+        aws.security_groups           = userConfig[ "securityGroups" ]
+        aws.subnet_id                 = userConfig[ "subnet"         ]
+        aws.tenancy                   = userConfig[ "tenancy"        ]
+        
+        # Having a Name tag has special meaning to the console, so we provide custom support
+        tags = userConfig[ 'tags' ]
+        unless tags.nil?
+            tags = { 'Name' => userConfig[ 'name' ] }.merge( userConfig[ 'tags' ] )
+        end
+        
+        aws.tags                      = tags
+        
+        # Determine best way to connect, private ip address (i.e. through a vpn) or public etc
+        case userConfig[ "connectWith" ]
+        when "privateIP"
+            aws.ssh_host_attribute        = :private_ip_address
+        when "dns"
+            aws.ssh_host_attribute        = :dns_name
+        else
+            aws.ssh_host_attribute        = :public_ip_address
+        end
+            
+        user_data = userConfig[ "userData" ]
+            
+        # if winrm we need to ensure we enable it on first boot
+        if userConfig[ "protocol" ] == 'winrm'
+                
+            user_data = <<-END.gsub( /^\s+\|/, '' )
+              |<powershell>
+              |  Enable-PSRemoting -Force
+              |  netsh advfirewall firewall add rule name="WinRM HTTP" dir=in localport=5985 protocol=TCP action=allow
+              |</powershell>
+            END
+
+        end
+            
+        aws.user_data = user_data
+
+    end # END AWS provider
+end
+
 # Downloads a file from source to the target directory
 # Params:
 # +source+:: +String+ object of the ftp, http or https path to download from
@@ -351,76 +444,23 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             config.vm.guest = :linux
         end
         
-        # AWS specifics
-        mybox.vm.provider :aws do |aws, override|
-
-            # connection settings
-            case userConfig[ "protocol" ]
-            when 'winrm'
-                # For AWS get encrypted password from the admin account
-                override.winrm.username = "Administrator"
-                override.winrm.password = :aws
-            else
-                override.ssh.username = userConfig[ "sshUser" ]
-            end
         
-            # Use a private key file based on the keypair name if possible
-            private_key_path = File.expand_path( format( "%s.%s", File.join( userConfig[ "sshDir"  ], userConfig[ "keypair" ] ), "pem" ) )
-            if File.exist?( private_key_path )
-                override.ssh.private_key_path = private_key_path
-            end
-
-            # Instance settings
-            aws.ami                       = userConfig[ "ami"            ]
-            aws.associate_public_ip       = userConfig[ "publicIP"       ]
-            aws.aws_profile               = userConfig[ "profile"        ]
-            aws.ebs_optimized             = userConfig[ "ebsOptimize"    ]
-            aws.elastic_ip                = userConfig[ "elasticIP"      ]
-            aws.elb                       = userConfig[ "elb"            ]
-            aws.iam_instance_profile_name = userConfig[ "iamRole"        ]
-            aws.instance_type             = userConfig[ "instanceType"   ]
-            aws.keypair_name              = userConfig[ "keypair"        ]
-            aws.monitoring                = userConfig[ "monitor"        ]
-            aws.security_groups           = userConfig[ "securityGroups" ]
-            aws.subnet_id                 = userConfig[ "subnet"         ]
-            aws.tenancy                   = userConfig[ "tenancy"        ]
+        ##############################################################
+        # Configure
+        
+        %i( aws vbox esx ).each do |provider|
             
-        
-            # Having a Name tag has special meaning to the console, so we provide custom support
-            tags = userConfig[ 'tags' ]
-            unless tags.nil?
-                tags = { 'Name' => userConfig[ 'name' ] }.merge( userConfig[ 'tags' ] )
-            end
-        
-            aws.tags                      = tags
-        
-            # Determine best way to connect, private ip address (i.e. through a vpn) or public etc
-            case userConfig[ "connectWith" ]
-            when "privateIP"
-                aws.ssh_host_attribute        = :private_ip_address
-            when "dns"
-                aws.ssh_host_attribute        = :dns_name
-            else
-                aws.ssh_host_attribute        = :public_ip_address
+            # Will run the first matching provider only based on the box type
+            case provider
+            when :aws
+                run_aws_provider(  mybox, userConfig )
+            when :vbox
+                run_vbox_provider( mybox, userConfig )
+            when :esx
+                run_esx_provider(  mybox, userConfig )
             end
             
-            user_data = userConfig[ "userData" ]
-            
-            # if winrm we need to ensure we enable it on first boot
-            if userConfig[ "protocol" ] == 'winrm'
-                
-                user_data = <<-END.gsub( /^\s+\|/, '' )
-                  |<powershell>
-                  |  Enable-PSRemoting -Force
-                  |  netsh advfirewall firewall add rule name="WinRM HTTP" dir=in localport=5985 protocol=TCP action=allow
-                  |</powershell>
-                END
-
-            end
-            
-            aws.user_data = user_data
-
-        end # END AWS provider
+        end
 
 
         ##############################################################
