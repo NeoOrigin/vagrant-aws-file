@@ -32,6 +32,7 @@ userConfig = {
     "profile"        => 'default',
     "protocol"       => 'ssh',
     "publicIP"       => false,
+    "run"            => nil,
     "securityGroups" => '',
     "sshUser"        => 'ec2-user',
     "sshDir"         => '~/.ssh',
@@ -151,6 +152,7 @@ opts = GetoptLong.new(
     [ '--profile',               GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--protocol',              GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--public-ip',             GetoptLong::OPTIONAL_ARGUMENT ],
+    [ '--run',                   GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--security-groups',       GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--subnet',                GetoptLong::OPTIONAL_ARGUMENT ],
     [ '--ssh-user',              GetoptLong::OPTIONAL_ARGUMENT ],
@@ -220,6 +222,8 @@ opts.each do |opt, arg|
             userConfig[ "protocol"       ] = arg
         when '--public-ip'
             userConfig[ "publicIP"       ] = arg
+        when '--run'
+            userConfig[ "run"            ] = arg
         when '--security-groups'
             userConfig[ "securityGroups" ] = arg.split( "," )
         when '--ssh-dir'
@@ -302,7 +306,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     config.vm.define userConfig[ "name" ] do |mybox|
 
         case userConfig[ "protocol" ]
-        when 'winrm'
+        when 'winrm', 'winssh'
             config.vm.guest = :windows
         else
             config.vm.guest = :linux
@@ -359,24 +363,40 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                 aws.ssh_host_attribute        = :public_ip_address
             end
             
+            user_data = userConfig[ "userData" ]
+            
+            # if winrm we need to ensure we enable it on first boot
             case userConfig[ "protocol" ]
             when 'winrm'
                 
-                aws.user_data = <<-USERDATA
+                user_data = <<-USERDATA
                   <powershell>
                     Enable-PSRemoting -Force
                     netsh advfirewall firewall add rule name="WinRM HTTP" dir=in localport=5985 protocol=TCP action=allow
                   </powershell>
                 USERDATA
-            else
-                aws.user_data = userConfig[ "userData"       ]
             end
+            
+            aws.user_data = user_data
 
         end
 
 
         ##############################################################
         # Provision
+        
+        unless userConfig[ "run" ].nil?
+            if File.exist?( userConfig[ "run" ] )
+                if userConfig[ "run" ].end_with( ".sh" )
+                    mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                elsif userConfig[ "run" ].end_with( ".yml" )
+                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
+                        ansible.playbook  = userConfig[ "run" ]
+                        ansible.sudo      = userConfig[ "sudo" ]
+                    end
+                end
+            end
+        end
 
         # Provision using a local shell script if one exists
         if File.exist?( "./provision/shell/run-once.sh" )
