@@ -394,6 +394,8 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                         ansible.playbook  = userConfig[ "run" ]
                         ansible.sudo      = userConfig[ "sudo" ]
                     end
+                 else
+                     mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
                 end
             end
         end
