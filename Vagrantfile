@@ -418,6 +418,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     %w( sh ps1 bat ).each do |extension|
         
         Dir.glob( [
+          File.join( ".", "deploy", "*.#{extension}" ),
           File.join( ".", "deploy.*.#{extension}" ),
           File.join( ".", "deploy.#{extension}" )
         ] ) do |script_path|
@@ -437,12 +438,14 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     %w( json yml yaml ).each do |extension|
         
         Dir.glob( [
+          File.join( ".", "deploy", "*.#{extension}" ),
           File.join( ".", "deploy.*.#{extension}" ),
           File.join( ".", "deploy.#{extension}" )
         ] ) do |script_path|
         
             if File.exist?( script_path )
     
+                # sane defaults before merging in
                 pushConfig = {
                     "host"        => nil,
                     "username"    => userConfig[ "sshUser" ],
@@ -450,10 +453,11 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                     "secure"      => true,
                     "destination" => ".",
                     "source"      => "."
-                }.merge( load_file( script_path, extension ) )
+                }.merge( load_file( script_path ) )
         
                 if pushConfig[ "cmd" ].nil?
             
+                    # no custom cmd so assume s/ftp
                     config.push.define "ftp" do |push|
                         push.host        = pushConfig[ "host"        ]
                         push.username    = pushConfig[ "username"    ]
@@ -468,17 +472,18 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                 
                 else
                 
+                    # a cmd was specified, interpret it
                     config.push.define "local-exec" do |push|
                         push.inline = pushConfig[ "cmd" ] % pushConfig
                     end
                 
-                end
+                end # END cmd not specified
                 
-            end
+            end # END config exists
             
-        end
+        end # END glob
     
-    end
+    end # END extension loop
     
     
     ##############################################################
@@ -503,7 +508,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             config.proxy.no_proxy = userConfig[ "noProxy"    ]
         end
         
-    end
+    end # END proxy plugin check
 
 
     ##############################################################
