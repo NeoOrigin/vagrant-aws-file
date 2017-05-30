@@ -5,6 +5,8 @@ require 'getoptlong'
 require 'json'
 require 'yaml'
 
+require 'vagrant/util/downloader'
+
 #########################################################################################
 # DEFAULTS
 #########################################################################################
@@ -45,13 +47,39 @@ userConfig = {
 
 #########################################################################################
 
+# Downloads a file from source to the target directory
+# Params:
+# +source+:: +String+ object of the ftp, http or https path to download from
+# +download_dir+:: +String+ object set to the directory to download to
+# +delete_if_exists+:: +Boolean+ object set to true if you want to overwrite existing files
+def downloadFile( source, download_dir = ".", delete_if_exists = true )
+    
+    data = File.basename( source )
+    
+    # Create our path to download to
+    download_path = File.join( download_dir, data )
+        
+    # Empty out any pre existing download as long as we dont override *this* script
+    if ( data != "Vagrantfile" ) && delete_if_exists && download_path.file?
+        download_path.delete
+    end
+
+    # Download
+    Vagrant::Util::Downloader.new( source, download_path ).download!
+        
+    return download_path
+end
+
 # Standardizes reading data from a file or from a string
 # Params:
 # +data+:: +String+ object that specifies an optional type prefix (of the form yaml:// etc) and the data itself e.g. a file path
 # +default_format+:: +String+ object indicating the format to interpret with if we cannot determine that directly from the data
-def load_file( data, default_format = "yaml" )
-    res        = nil
-    guess_file = false
+# +download_dir+:: +String+ object set to the directory to download to if required
+# +delete_if_exists+:: +Boolean+ object set to true if you want to overwrite existing files on download
+def load_file( data, default_format = "yaml", download_dir = ".", delete_if_exists = true )
+    
+    res          = nil
+    guess_file   = false
     
     # Add format if we know its a file and not a raw string
     if File.exist?( File.expand_path( data ) )
@@ -59,6 +87,9 @@ def load_file( data, default_format = "yaml" )
     elsif data.start_with?( 'file://' )
         guess_file = true
         data       = data[ 7, data.length ]
+    elsif data.start_with?( 'ftp://', 'http://', 'https://' )
+        guess_file = true
+        data       = downloadFile( data, download_dir, true )
     end
     
     # we know its a file but not sure what..
@@ -406,14 +437,14 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                 script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
 
                 # Provision using a local shell script if one exists
-                if File.exist?( script_path ) and !matched_once
+                if File.exist?( script_path ) && !matched_once
                     mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ]
                     matched_once = true
                 end
 
                 script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
 
-                if File.exist?( script_path ) and !matched_every
+                if File.exist?( script_path ) && !matched_every
                     mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ], run: "always"
                     matched_every = true
                 end
@@ -429,7 +460,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                 script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
 
                 # Provision using ansible_local if exists
-                if File.exist?( script_path ) and !matched_once
+                if File.exist?( script_path ) && !matched_once
 
                     mybox.vm.provision "ansible_local" do |ansible|
                         ansible.playbook  = script_path
@@ -441,7 +472,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
                 script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
 
-                if File.exist?( script_path ) and !matched_every
+                if File.exist?( script_path ) && !matched_every
 
                     mybox.vm.provision "ansible_local", run: "always" do |ansible|
                         ansible.playbook  = script_path
@@ -457,6 +488,11 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
             # No custom provisioner option passed in so check for file based existance
             
+            # Download the provisioning script if we have to
+            if userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
+                userConfig[ "run" ] = downloadFile( userConfig[ "run" ], download_dir = "." )
+            end
+            
             if File.exist?( userConfig[ "run" ] )
                 
                 if userConfig[ "run" ].end_with?( ".yml", ".yaml" )
@@ -469,11 +505,8 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                 elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
                     mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
                 end # END provisioner extension check
-            
-            elsif userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
-                # Allow pointing to a remote shell provisioning script
-                mybox.vm.provision "shell", path:   userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
-	    else
+
+            else
                 # Run an inline shell command
                 mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
             end # END provisioner is a file check
