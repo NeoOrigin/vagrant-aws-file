@@ -66,17 +66,17 @@ def load_file( data, default_format = "yaml" )
     
         data = File.expand_path( data )
         
-        # check extension if that not clear use default
+        # check extension if that not clear use default, prefix the data
         if data.end_with?( ".yml", ".yaml" )
-            data = "yamlfile://" + data
+            data = "yamlfile://#{data}"
         elsif data.end_with?( ".json" )
-            data = "jsonfile://" + data
+            data = "jsonfile://#{data}"
         elsif default_format in [ "yml", "yaml" ]
-            data = "yamlfile://" + data
+            data = "yamlfile://#{data}"
         elsif default_format == "json"
-            data = "jsonfile://" + data
+            data = "jsonfile://#{data}"
         else
-            data = "rawfile://"  + data
+            data = "rawfile://#{data}"
         end
         
     end
@@ -167,15 +167,17 @@ opts = GetoptLong.new(
 
 # load from config file/s if exists, before we look at command line
 # yml takes precedence, whereas subdirectories override
-[ ".", "./config" ].each do |folder|
+%w( . ./config ).each do |folder|
 
     confPath = nil
     
     # Go through supported config types for loading
-    [ "json", "yml", "yaml" ].each do |extension|
+    %w( json yml yaml ).each do |extension|
         
-        if File.exist?( File.join( folder, "config." + extension ) )
-            confPath = extension + "file://" + File.join( folder, "config." + extension )
+        file_path = File.join( folder, "config.#{extension}" )
+        
+        if File.exist?( file_path )
+            confPath = "#{extension}file://#{file_path}"
         end
         
     end
@@ -247,13 +249,13 @@ opts.each do |opt, arg|
 
             userConfig[ "tags" ] = userConfig[ "tags" ].merge( newTags )
         when '--user-data'
+            prefix = "raw://"
+        
             if arg.start_with?( 'file://' )
                 prefix   = "raw"
-            else
-                prefix   = "raw://"
             end
             
-            userConfig[ "userData" ] = load_file( prefix + arg, "raw" )
+            userConfig[ "userData" ] = load_file( "#{prefix}#{arg}", "raw" )
     end
 end
 
@@ -331,7 +333,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             end
         
             # Use a private key file based on the keypair name if possible
-            private_key_path = File.expand_path( File.join( userConfig[ "sshDir"  ], userConfig[ "keypair" ] + ".pem" ) )
+            private_key_path = File.expand_path( format( "%s.%s", File.join( userConfig[ "sshDir"  ], userConfig[ "keypair" ] ), "pem" ) )
             if File.exist?( private_key_path )
                 override.ssh.private_key_path = private_key_path
             end
@@ -398,9 +400,9 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             matched_once  = false
             matched_every = false
 
-            [ "sh", "ps1", "bat" ].each do |extension|
+            %w( sh ps1 bat ).each do |extension|
 
-                script_path = File.join( ".", "provision", "shell", "run-once." + extension )
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
 
                 # Provision using a local shell script if one exists
                 if File.exist?( script_path ) and !matched_once
@@ -408,7 +410,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                     matched_once = true
                 end
 
-                script_path = File.join( ".", "provision", "shell", "run-every." + extension )
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
 
                 if File.exist?( script_path ) and !matched_every
                     mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ], run: "always"
@@ -421,9 +423,9 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             matched_once  = false
             matched_every = false
 
-            [ "yml", "yaml" ].each do |extension|
+            %w( yml yaml ).each do |extension|
 
-                script_path = File.join( ".", "provision", "shell", "run-once." + extension )
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
 
                 # Provision using ansible_local if exists
                 if File.exist?( script_path ) and !matched_once
@@ -436,7 +438,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                     matched_once = true
                 end
 
-                script_path = File.join( ".", "provision", "shell", "run-every." + extension )
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
 
                 if File.exist?( script_path ) and !matched_every
 
