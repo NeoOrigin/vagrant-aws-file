@@ -54,7 +54,7 @@ def load_file( data, default_format = "yaml" )
     guess_file = false
     
     # Add format if we know its a file and not a raw string
-    if File.exists?( File.expand_path( data ) )
+    if File.exist?( File.expand_path( data ) )
         guess_file = true
     elsif data.start_with?( 'file://' )
         guess_file = true
@@ -251,8 +251,9 @@ opts.each do |opt, arg|
         when '--user-data'
             prefix = "raw://"
         
+            # Adjust the prefix so its not interpreted as a yaml file etc
             if arg.start_with?( 'file://' )
-                prefix   = "raw"
+                prefix = "raw"
             end
             
             userConfig[ "userData" ] = load_file( "#{prefix}#{arg}", "raw" )
@@ -458,18 +459,22 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             
             if File.exist?( userConfig[ "run" ] )
                 
-                if userConfig[ "run" ].end_with( ".yml", ".yaml" )
+                if userConfig[ "run" ].end_with?( ".yml", ".yaml" )
 
                     mybox.vm.provision "ansible_local", run: "always" do |ansible|
                         ansible.playbook  = userConfig[ "run"  ]
                         ansible.sudo      = userConfig[ "sudo" ]
                     end
 
-                elsif userConfig[ "run" ].end_with( ".sh", ".bat", ".ps1" )
+                elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
                     mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
                 end # END provisioner extension check
             
-            else
+            elsif userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
+                # Allow pointing to a remote shell provisioning script
+                mybox.vm.provision "shell", path:   userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+	    else
+                # Run an inline shell command
                 mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
             end # END provisioner is a file check
 
