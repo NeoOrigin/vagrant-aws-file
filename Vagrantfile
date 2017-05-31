@@ -222,12 +222,12 @@ def load_file( data, default_format = "yaml", download_dir = ".", delete_if_exis
             data = "jsonfile://#{data}"
         elsif data.end_with?( ".ini" )
             data = "inifile://#{data}"
-        elsif default_format in [ "yml", "yaml" ]
-            data = "yamlfile://#{data}"
-        elsif default_format == "json"
-            data = "jsonfile://#{data}"
-        elsif default_format == "ini"
-            data = "inifile://#{data}"
+        elsif data.end_with?( ".env" )
+            data = "envfile://#{data}"
+        elsif default_format in [ "yml", "yaml", "json", "ini", "env" ]
+            # For yaml as it can be referred to with multiple extensions we standardize it
+            data = "#{default_format}file://#{data}"
+            data = data.sub( /^ymlfile\:\/\//, 'yamlfile://' )
         else
             data = "rawfile://#{data}"
         end
