@@ -60,6 +60,52 @@ userConfig = {
 
 #########################################################################################
 
+# Performs remote proxy configuration via the vagrant-proxyconf plugin
+# Params:
+# +config+:: The configuration we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_proxy_config( config, userConfig = {} )
+    
+    if Vagrant.has_plugin?( "vagrant-proxyconf" )
+	
+        # Set proxy if one is defined and the plugin is installed
+        unless userConfig[ "ftpProxy" ].nil?
+            config.proxy.ftp      = userConfig[ "ftpProxy"   ]
+        end
+	
+        unless userConfig[ "httpProxy" ].nil?
+            config.proxy.http     = userConfig[ "httpProxy"  ]
+        end
+	
+        unless userConfig[ "httpsProxy" ].nil?
+            config.proxy.https    = userConfig[ "httpsProxy" ]
+        end
+
+        unless userConfig[ "noProxy" ].nil?
+            config.proxy.no_proxy = userConfig[ "noProxy"    ]
+        end
+        
+    end # END proxy plugin check
+    
+end
+
+# Performs configuration shared across all providers
+# Params:
+# +config+:: The configuration we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_core_config( config, userConfig = {} )
+    config.vm.box = userConfig[ "box" ]
+	
+    # Default non provider specific connection settings
+    case userConfig[ "protocol" ]
+    when 'winrm'
+        config.winrm.username = userConfig[ "winrmUser"     ]
+        config.winrm.password = userConfig[ "winrmPassword" ]
+    else
+        config.ssh.username = userConfig[ "sshUser" ]
+    end
+end
+
 # Creates A Vmware ESX resource
 # Params:
 # +mybox+:: The box definition we are working on
@@ -442,13 +488,6 @@ VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
-    # merge in .env files as a last resort
-    if Vagrant.has_plugin?( "vagrant-env" )
-        config.env.enable
-        
-        userConfig = userConfig.merge( ENV )
-    end
-    
     # Determine communication to use
     config.vm.communicator = userConfig[ "protocol" ]
     
@@ -525,33 +564,11 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     ##############################################################
     # Proxy Setup
-
-    if Vagrant.has_plugin?( "vagrant-proxyconf" )
-	
-        # Set proxy if one is defined and the plugin is installed
-        unless userConfig[ "ftpProxy" ].nil?
-            config.proxy.ftp      = userConfig[ "ftpProxy"   ]
-        end
-	
-        unless userConfig[ "httpProxy" ].nil?
-            config.proxy.http     = userConfig[ "httpProxy"  ]
-        end
-	
-        unless userConfig[ "httpsProxy" ].nil?
-            config.proxy.https    = userConfig[ "httpsProxy" ]
-        end
-
-        unless userConfig[ "noProxy" ].nil?
-            config.proxy.no_proxy = userConfig[ "noProxy"    ]
-        end
-        
-    end # END proxy plugin check
-
+    run_proxy_config( config, userConfig )
 
     ##############################################################
-    # Aws Setup
-
-    config.vm.box = userConfig[ "box" ]
+    # Setup
+    run_core_config( config, userConfig = {} )
     
     config.vm.define userConfig[ "name" ] do |mybox|
 
@@ -616,6 +633,39 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
             matched_once  = false
             matched_every = false
 
+            %w( pp ).each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
+
+                # Provision using puppet if exists
+                if File.exist?( script_path ) && !matched_once
+
+                    mybox.vm.provision :puppet do |puppet|
+                        puppet.manifests_path = File.dirname(  script_path )
+                        puppet.manifest_file  = File.basename( script_path )
+                    end
+
+                    matched_once = true
+                end
+
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
+
+                if File.exist?( script_path ) && !matched_every
+
+                    mybox.vm.provision :puppet, run: "always" do |puppet|
+                        puppet.manifests_path = File.dirname(  script_path )
+                        puppet.manifest_file  = File.basename( script_path )
+                    end
+
+                    matched_every = true
+                end
+
+            end # END puppet determination
+            
+            # Reset
+            matched_once  = false
+            matched_every = false
+
             %w( yml yaml ).each do |extension|
 
                 script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
@@ -664,7 +714,15 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                         ansible.playbook  = userConfig[ "run"  ]
                         ansible.sudo      = userConfig[ "sudo" ]
                     end
+                
+                elsif userConfig[ "run" ].end_with?( ".pp" )
 
+                    config.vm.provision :puppet do |puppet|
+                        puppet.manifests_path = File.dirname(  userConfig[ "run" ] )
+                        puppet.manifest_file  = File.basename( userConfig[ "run" ] )
+                        #puppet.module_path = "puppet/modules"
+                    end
+                    
                 elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
                     
                     # Shell scripts
