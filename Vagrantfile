@@ -7,12 +7,25 @@ require 'yaml'
 
 require 'vagrant/util/downloader'
 
+# Import inifile gem to parse ini files if its installed
+inifile_found = Gem::Dependency.new( 'inifile' ).matching_specs.max_by(&:version)
+if inifile_found
+    require 'inifile'
+end
+
+# Import dotenv gem to parse env files if its installed
+dotenv_found = Gem::Dependency.new( 'dotenv' ).matching_specs.max_by(&:version)
+if dotenv_found
+    require 'dotenv'
+end
+
+
 #########################################################################################
 # DEFAULTS
 #########################################################################################
 
 # If copying this Vagrantfile, please modify these defaults for your own use case or use a
-# config.(json|yml) in the same directory
+# config.(json|yml|ini|env) in the same directory
 
 userConfig = {
     "ami"            => nil,
@@ -46,6 +59,52 @@ userConfig = {
 }
 
 #########################################################################################
+
+# Performs remote proxy configuration via the vagrant-proxyconf plugin
+# Params:
+# +config+:: The configuration we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_proxy_config( config, userConfig = {} )
+    
+    if Vagrant.has_plugin?( "vagrant-proxyconf" )
+	
+        # Set proxy if one is defined and the plugin is installed
+        unless userConfig[ "ftpProxy" ].nil?
+            config.proxy.ftp      = userConfig[ "ftpProxy"   ]
+        end
+	
+        unless userConfig[ "httpProxy" ].nil?
+            config.proxy.http     = userConfig[ "httpProxy"  ]
+        end
+	
+        unless userConfig[ "httpsProxy" ].nil?
+            config.proxy.https    = userConfig[ "httpsProxy" ]
+        end
+
+        unless userConfig[ "noProxy" ].nil?
+            config.proxy.no_proxy = userConfig[ "noProxy"    ]
+        end
+        
+    end # END proxy plugin check
+    
+end
+
+# Performs configuration shared across all providers
+# Params:
+# +config+:: The configuration we are working on
+# +userConfig+:: +Hash+ object representing the configuration for the underlying instance
+def run_core_config( config, userConfig = {} )
+    config.vm.box = userConfig[ "box" ]
+	
+    # Default non provider specific connection settings
+    case userConfig[ "protocol" ]
+    when 'winrm'
+        config.winrm.username = userConfig[ "winrmUser"     ]
+        config.winrm.password = userConfig[ "winrmPassword" ]
+    else
+        config.ssh.username = userConfig[ "sshUser" ]
+    end
+end
 
 # Creates A Vmware ESX resource
 # Params:
@@ -207,14 +266,29 @@ def load_file( data, default_format = "yaml", download_dir = ".", delete_if_exis
             data = "yamlfile://#{data}"
         elsif data.end_with?( ".json" )
             data = "jsonfile://#{data}"
-        elsif default_format in [ "yml", "yaml" ]
-            data = "yamlfile://#{data}"
-        elsif default_format == "json"
-            data = "jsonfile://#{data}"
+        elsif data.end_with?( ".ini" )
+            data = "inifile://#{data}"
+        elsif data.end_with?( ".env" )
+            data = "envfile://#{data}"
+        elsif default_format in [ "yml", "yaml", "json", "ini", "env" ]
+            # For yaml as it can be referred to with multiple extensions we standardize it
+            data = "#{default_format}file://#{data}"
+            data = data.sub( /^ymlfile\:\/\//, 'yamlfile://' )
         else
             data = "rawfile://#{data}"
         end
         
+    end
+    
+    # Special handling for files that require gems as library might not be installed, default to raw
+    if !inifile_found
+        data = data.sub( /^inifile?\:\/\//, 'rawfile://' )
+        data = data.sub( /^ini\:\/\//,      'raw://'     )
+    end
+    
+    if !dotenv_found
+        data = data.sub( /^envfile?\:\/\//, 'rawfile://' )
+        data = data.sub( /^env\:\/\//,      'raw://'     )
     end
 
     # we should have correctly prefixed at this point
@@ -226,6 +300,15 @@ def load_file( data, default_format = "yaml", download_dir = ".", delete_if_exis
         res = JSON.parse( File.read( File.expand_path( data[ 11, data.length ] ) ) )
     elsif data.start_with?( 'json://' )
         res = JSON.parse( data[ 7, data.length ] )
+    elsif data.start_with?( 'inifile://' )
+        res = IniFile.load( File.expand_path( data[ 10, data.length ] ) ).to_h
+    elsif data.start_with?( 'ini://' )
+        res = IniFile.parse( data[ 6, data.length ] ).to_h
+    elsif data.start_with?( 'envfile://' )
+        # We dont necessarily want these loaded into the ENV variable so use this longer method
+        res = Dotenv::Parser.call( File.read( File.expand_path( data[ 10, data.length ] ) ) )
+    elsif data.start_with?( 'env://' )
+        res = Dotenv::Parser.call( data[ 6, data.length ] )
     elsif data.start_with?( 'rawfile://' )
         res = File.read( File.expand_path( data[ 10, data.length ] ) )
     elsif data.start_with?( 'raw://' )
@@ -308,7 +391,7 @@ opts = GetoptLong.new(
     confPath = nil
     
     # Go through supported config types for loading
-    %w( json yml yaml ).each do |extension|
+    %w( env ini json yml yaml ).each do |extension|
         
         file_path = File.join( folder, "config.#{extension}" )
         
@@ -405,13 +488,6 @@ VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
-    # merge in .env files as a last resort
-    if Vagrant.has_plugin?( "vagrant-env" )
-        config.env.enable
-        
-        userConfig = userConfig.merge( ENV )
-    end
-    
     # Determine communication to use
     config.vm.communicator = userConfig[ "protocol" ]
     
@@ -435,7 +511,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     end
     
-    %w( json yml yaml ).each do |extension|
+    %w( env ini json yml yaml ).each do |extension|
         
         Dir.glob( [
           File.join( ".", "deploy", "*.#{extension}" ),
@@ -488,33 +564,11 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     ##############################################################
     # Proxy Setup
-
-    if Vagrant.has_plugin?( "vagrant-proxyconf" )
-	
-        # Set proxy if one is defined and the plugin is installed
-        unless userConfig[ "ftpProxy" ].nil?
-            config.proxy.ftp      = userConfig[ "ftpProxy"   ]
-        end
-	
-        unless userConfig[ "httpProxy" ].nil?
-            config.proxy.http     = userConfig[ "httpProxy"  ]
-        end
-	
-        unless userConfig[ "httpsProxy" ].nil?
-            config.proxy.https    = userConfig[ "httpsProxy" ]
-        end
-
-        unless userConfig[ "noProxy" ].nil?
-            config.proxy.no_proxy = userConfig[ "noProxy"    ]
-        end
-        
-    end # END proxy plugin check
-
+    run_proxy_config( config, userConfig )
 
     ##############################################################
-    # Aws Setup
-
-    config.vm.box = userConfig[ "box" ]
+    # Setup
+    run_core_config( config, userConfig = {} )
     
     config.vm.define userConfig[ "name" ] do |mybox|
 
@@ -550,6 +604,8 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
         
         if userConfig[ "run" ].nil?
 
+            # No custom provisioner option passed in so check for file based existance
+            
             # Keep track of which provision script we are matching
             matched_once  = false
             matched_every = false
@@ -573,6 +629,39 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
             end # END shell provisioner determination
 
+            # Reset
+            matched_once  = false
+            matched_every = false
+
+            %w( pp ).each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
+
+                # Provision using puppet if exists
+                if File.exist?( script_path ) && !matched_once
+
+                    mybox.vm.provision :puppet do |puppet|
+                        puppet.manifests_path = File.dirname(  script_path )
+                        puppet.manifest_file  = File.basename( script_path )
+                    end
+
+                    matched_once = true
+                end
+
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
+
+                if File.exist?( script_path ) && !matched_every
+
+                    mybox.vm.provision :puppet, run: "always" do |puppet|
+                        puppet.manifests_path = File.dirname(  script_path )
+                        puppet.manifest_file  = File.basename( script_path )
+                    end
+
+                    matched_every = true
+                end
+
+            end # END puppet determination
+            
             # Reset
             matched_once  = false
             matched_every = false
@@ -608,29 +697,44 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
         else
 
-            # No custom provisioner option passed in so check for file based existance
+            # A custom provisioner was passed in, see if we need to download it or just process it
             
             # Download the provisioning script if we have to
             if userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
                 userConfig[ "run" ] = downloadFile( userConfig[ "run" ], download_dir = "." )
             end
             
+            # Should have downloaded but check perhpas if its a string literal
             if File.exist?( userConfig[ "run" ] )
                 
+                # Yml scripts generally indicate an ansible provisioner
                 if userConfig[ "run" ].end_with?( ".yml", ".yaml" )
 
                     mybox.vm.provision "ansible_local", run: "always" do |ansible|
                         ansible.playbook  = userConfig[ "run"  ]
                         ansible.sudo      = userConfig[ "sudo" ]
                     end
+                
+                elsif userConfig[ "run" ].end_with?( ".pp" )
 
+                    config.vm.provision :puppet do |puppet|
+                        puppet.manifests_path = File.dirname(  userConfig[ "run" ] )
+                        puppet.manifest_file  = File.basename( userConfig[ "run" ] )
+                        #puppet.module_path = "puppet/modules"
+                    end
+                    
                 elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
+                    
+                    # Shell scripts
                     mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                    
                 end # END provisioner extension check
 
             else
+                
                 # Run an inline shell command
                 mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                
             end # END provisioner is a file check
 
         end # END custom provisioner check
