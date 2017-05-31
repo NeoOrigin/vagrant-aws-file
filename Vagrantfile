@@ -7,12 +7,25 @@ require 'yaml'
 
 require 'vagrant/util/downloader'
 
+# Import inifile gem to parse ini files if its installed
+inifile_found = Gem::Dependency.new( 'inifile' ).matching_specs.max_by(&:version)
+if inifile_found
+    require 'inifile'
+end
+
+# Import dotenv gem to parse env files if its installed
+dotenv_found = Gem::Dependency.new( 'dotenv' ).matching_specs.max_by(&:version)
+if dotenv_found
+    require 'dotenv'
+end
+
+
 #########################################################################################
 # DEFAULTS
 #########################################################################################
 
 # If copying this Vagrantfile, please modify these defaults for your own use case or use a
-# config.(json|yml) in the same directory
+# config.(json|yml|ini|env) in the same directory
 
 userConfig = {
     "ami"            => nil,
@@ -207,14 +220,29 @@ def load_file( data, default_format = "yaml", download_dir = ".", delete_if_exis
             data = "yamlfile://#{data}"
         elsif data.end_with?( ".json" )
             data = "jsonfile://#{data}"
+        elsif data.end_with?( ".ini" )
+            data = "inifile://#{data}"
         elsif default_format in [ "yml", "yaml" ]
             data = "yamlfile://#{data}"
         elsif default_format == "json"
             data = "jsonfile://#{data}"
+        elsif default_format == "ini"
+            data = "inifile://#{data}"
         else
             data = "rawfile://#{data}"
         end
         
+    end
+    
+    # Special handling for files that require gems as library might not be installed, default to raw
+    if !inifile_found
+        data = data.sub( /^inifile?\:\/\//, 'rawfile://' )
+        data = data.sub( /^ini\:\/\//,      'raw://'     )
+    end
+    
+    if !dotenv_found
+        data = data.sub( /^envfile?\:\/\//, 'rawfile://' )
+        data = data.sub( /^env\:\/\//,      'raw://'     )
     end
 
     # we should have correctly prefixed at this point
@@ -226,6 +254,15 @@ def load_file( data, default_format = "yaml", download_dir = ".", delete_if_exis
         res = JSON.parse( File.read( File.expand_path( data[ 11, data.length ] ) ) )
     elsif data.start_with?( 'json://' )
         res = JSON.parse( data[ 7, data.length ] )
+    elsif data.start_with?( 'inifile://' )
+        res = IniFile.load( File.expand_path( data[ 10, data.length ] ) ).to_h
+    elsif data.start_with?( 'ini://' )
+        res = IniFile.parse( data[ 6, data.length ] ).to_h
+    elsif data.start_with?( 'envfile://' )
+        # We dont necessarily want these loaded into the ENV variable so use this longer method
+        res = Dotenv::Parser.call( File.read( File.expand_path( data[ 10, data.length ] ) ) )
+    elsif data.start_with?( 'env://' )
+        res = Dotenv::Parser.call( data[ 6, data.length ] )
     elsif data.start_with?( 'rawfile://' )
         res = File.read( File.expand_path( data[ 10, data.length ] ) )
     elsif data.start_with?( 'raw://' )
@@ -308,7 +345,7 @@ opts = GetoptLong.new(
     confPath = nil
     
     # Go through supported config types for loading
-    %w( json yml yaml ).each do |extension|
+    %w( env ini json yml yaml ).each do |extension|
         
         file_path = File.join( folder, "config.#{extension}" )
         
@@ -435,7 +472,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     
     end
     
-    %w( json yml yaml ).each do |extension|
+    %w( env ini json yml yaml ).each do |extension|
         
         Dir.glob( [
           File.join( ".", "deploy", "*.#{extension}" ),
@@ -550,6 +587,8 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
         
         if userConfig[ "run" ].nil?
 
+            # No custom provisioner option passed in so check for file based existance
+            
             # Keep track of which provision script we are matching
             matched_once  = false
             matched_every = false
@@ -608,15 +647,17 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
         else
 
-            # No custom provisioner option passed in so check for file based existance
+            # A custom provisioner was passed in, see if we need to download it or just process it
             
             # Download the provisioning script if we have to
             if userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
                 userConfig[ "run" ] = downloadFile( userConfig[ "run" ], download_dir = "." )
             end
             
+            # Should have downloaded but check perhpas if its a string literal
             if File.exist?( userConfig[ "run" ] )
                 
+                # Yml scripts generally indicate an ansible provisioner
                 if userConfig[ "run" ].end_with?( ".yml", ".yaml" )
 
                     mybox.vm.provision "ansible_local", run: "always" do |ansible|
@@ -625,12 +666,17 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
                     end
 
                 elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
+                    
+                    # Shell scripts
                     mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                    
                 end # END provisioner extension check
 
             else
+                
                 # Run an inline shell command
                 mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                
             end # END provisioner is a file check
 
         end # END custom provisioner check
