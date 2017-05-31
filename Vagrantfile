@@ -95,14 +95,39 @@ end
 # +userConfig+:: +Hash+ object representing the configuration for the underlying instance
 def run_core_config( config, userConfig = {} )
     config.vm.box = userConfig[ "box" ]
+    
+    # Update the underlying os type
+    case userConfig[ "protocol" ]
+        when 'winrm', 'winssh'
+            config.vm.guest = :windows
+        else
+            config.vm.guest = :linux
+    end
 	
     # Default non provider specific connection settings
     case userConfig[ "protocol" ]
-    when 'winrm'
-        config.winrm.username = userConfig[ "winrmUser"     ]
-        config.winrm.password = userConfig[ "winrmPassword" ]
-    else
-        config.ssh.username = userConfig[ "sshUser" ]
+        when 'winrm'
+            config.winrm.username = userConfig[ "winrmUser"     ]
+            config.winrm.password = userConfig[ "winrmPassword" ]
+        else
+            config.ssh.username = userConfig[ "sshUser" ]
+    end
+    
+end
+
+def run_provider( mybox, userConfig = {} )
+    %i( aws vbox esx ).each do |provider|
+            
+        # Will run the first matching provider only based on the box type
+        case provider
+            when :aws
+                run_aws_provider(  mybox, userConfig )
+            when :vbox
+                run_vbox_provider( mybox, userConfig )
+            when :esx
+                run_esx_provider(  mybox, userConfig )
+        end
+            
     end
 end
 
@@ -145,12 +170,12 @@ def run_aws_provider( mybox, userConfig = {} )
 
         # connection settings
         case userConfig[ "protocol" ]
-        when 'winrm'
-            # For AWS get encrypted password from the admin account
-            override.winrm.username = "Administrator"
-            override.winrm.password = :aws
-        else
-            override.ssh.username = userConfig[ "sshUser" ]
+            when 'winrm'
+                # For AWS get encrypted password from the admin account
+                override.winrm.username = "Administrator"
+                override.winrm.password = :aws
+            else
+                override.ssh.username = userConfig[ "sshUser" ]
         end
         
         # Use a private key file based on the keypair name if possible
@@ -184,12 +209,12 @@ def run_aws_provider( mybox, userConfig = {} )
         
         # Determine best way to connect, private ip address (i.e. through a vpn) or public etc
         case userConfig[ "connectWith" ]
-        when "privateIP"
-            aws.ssh_host_attribute        = :private_ip_address
-        when "dns"
-            aws.ssh_host_attribute        = :dns_name
-        else
-            aws.ssh_host_attribute        = :public_ip_address
+            when "privateIP"
+                aws.ssh_host_attribute        = :private_ip_address
+            when "dns"
+                aws.ssh_host_attribute        = :dns_name
+            else
+                aws.ssh_host_attribute        = :public_ip_address
         end
             
         user_data = userConfig[ "userData" ]
@@ -571,32 +596,10 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     run_core_config( config, userConfig = {} )
     
     config.vm.define userConfig[ "name" ] do |mybox|
-
-        # Update the underlying os type
-        case userConfig[ "protocol" ]
-        when 'winrm', 'winssh'
-            config.vm.guest = :windows
-        else
-            config.vm.guest = :linux
-        end
-        
         
         ##############################################################
         # Configure
-        
-        %i( aws vbox esx ).each do |provider|
-            
-            # Will run the first matching provider only based on the box type
-            case provider
-            when :aws
-                run_aws_provider(  mybox, userConfig )
-            when :vbox
-                run_vbox_provider( mybox, userConfig )
-            when :esx
-                run_esx_provider(  mybox, userConfig )
-            end
-            
-        end
+        run_provider( mybox, userConfig )
 
 
         ##############################################################
