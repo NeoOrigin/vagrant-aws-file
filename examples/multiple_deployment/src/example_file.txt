@@ -1,0 +1,1 @@
+The contents of this file doesn't matter. It's just to demonstrate that any content can get deployed to a remote system using vagrant push.
