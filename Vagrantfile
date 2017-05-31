@@ -60,6 +60,217 @@ userConfig = {
 
 #########################################################################################
 
+def run_deployment( config, userConfig = {} )
+    %w( sh ps1 bat ).each do |extension|
+        
+        Dir.glob( [
+          File.join( ".", "deploy", "*.#{extension}" ),
+          File.join( ".", "deploy.*.#{extension}" ),
+          File.join( ".", "deploy.#{extension}" )
+        ] ) do |script_path|
+        
+            if File.exist?( script_path )
+    
+                config.push.define "local-exec" do |push|
+                    push.script = script_path
+                end
+            
+            end
+            
+        end
+    
+    end
+    
+    %w( env ini json yml yaml ).each do |extension|
+        
+        Dir.glob( [
+          File.join( ".", "deploy", "*.#{extension}" ),
+          File.join( ".", "deploy.*.#{extension}" ),
+          File.join( ".", "deploy.#{extension}" )
+        ] ) do |script_path|
+        
+            if File.exist?( script_path )
+    
+                # sane defaults before merging in
+                pushConfig = {
+                    "host"        => nil,
+                    "username"    => userConfig[ "sshUser" ],
+                    "password"    => nil,
+                    "secure"      => true,
+                    "destination" => ".",
+                    "source"      => "."
+                }.merge( load_file( script_path ) )
+        
+                if pushConfig[ "cmd" ].nil?
+            
+                    # no custom cmd so assume s/ftp
+                    config.push.define "ftp" do |push|
+                        push.host        = pushConfig[ "host"        ]
+                        push.username    = pushConfig[ "username"    ]
+                        push.password    = pushConfig[ "password"    ]
+                        push.secure      = pushConfig[ "secure"      ]
+                        push.destination = pushConfig[ "destination" ]
+                        push.source      = pushConfig[ "source"      ]
+                        #passive
+                        #exclude
+                        #include
+                    end
+                
+                else
+                
+                    # a cmd was specified, interpret it
+                    config.push.define "local-exec" do |push|
+                        push.inline = pushConfig[ "cmd" ] % pushConfig
+                    end
+                
+                end # END cmd not specified
+                
+            end # END config exists
+            
+        end # END glob
+    
+    end # END extension loop
+end
+
+def run_provisioner( mybox, userConfig = {} )
+        if userConfig[ "run" ].nil?
+
+            # No custom provisioner option passed in so check for file based existance
+            
+            # Keep track of which provision script we are matching
+            matched_once  = false
+            matched_every = false
+
+            %w( sh ps1 bat ).each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
+
+                # Provision using a local shell script if one exists
+                if File.exist?( script_path ) && !matched_once
+                    mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ]
+                    matched_once = true
+                end
+
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
+
+                if File.exist?( script_path ) && !matched_every
+                    mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ], run: "always"
+                    matched_every = true
+                end
+
+            end # END shell provisioner determination
+
+            # Reset
+            matched_once  = false
+            matched_every = false
+
+            %w( pp ).each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
+
+                # Provision using puppet if exists
+                if File.exist?( script_path ) && !matched_once
+
+                    mybox.vm.provision :puppet do |puppet|
+                        puppet.manifests_path = File.dirname(  script_path )
+                        puppet.manifest_file  = File.basename( script_path )
+                    end
+
+                    matched_once = true
+                end
+
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
+
+                if File.exist?( script_path ) && !matched_every
+
+                    mybox.vm.provision :puppet, run: "always" do |puppet|
+                        puppet.manifests_path = File.dirname(  script_path )
+                        puppet.manifest_file  = File.basename( script_path )
+                    end
+
+                    matched_every = true
+                end
+
+            end # END puppet determination
+            
+            # Reset
+            matched_once  = false
+            matched_every = false
+
+            %w( yml yaml ).each do |extension|
+
+                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
+
+                # Provision using ansible_local if exists
+                if File.exist?( script_path ) && !matched_once
+
+                    mybox.vm.provision "ansible_local" do |ansible|
+                        ansible.playbook  = script_path
+                        ansible.sudo      = userConfig[ "sudo" ]
+                    end
+
+                    matched_once = true
+                end
+
+                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
+
+                if File.exist?( script_path ) && !matched_every
+
+                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
+                        ansible.playbook  = script_path
+                        ansible.sudo      = userConfig[ "sudo" ]
+                    end
+
+                    matched_every = true
+                end
+
+            end # END ansible provisioner determination
+
+        else
+
+            # A custom provisioner was passed in, see if we need to download it or just process it
+            
+            # Download the provisioning script if we have to
+            if userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
+                userConfig[ "run" ] = downloadFile( userConfig[ "run" ], download_dir = "." )
+            end
+            
+            # Should have downloaded but check perhpas if its a string literal
+            if File.exist?( userConfig[ "run" ] )
+                
+                # Yml scripts generally indicate an ansible provisioner
+                if userConfig[ "run" ].end_with?( ".yml", ".yaml" )
+
+                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
+                        ansible.playbook  = userConfig[ "run"  ]
+                        ansible.sudo      = userConfig[ "sudo" ]
+                    end
+                
+                elsif userConfig[ "run" ].end_with?( ".pp" )
+
+                    config.vm.provision :puppet do |puppet|
+                        puppet.manifests_path = File.dirname(  userConfig[ "run" ] )
+                        puppet.manifest_file  = File.basename( userConfig[ "run" ] )
+                        #puppet.module_path = "puppet/modules"
+                    end
+                    
+                elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
+                    
+                    # Shell scripts
+                    mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                    
+                end # END provisioner extension check
+
+            else
+                
+                # Run an inline shell command
+                mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
+                
+            end # END provisioner is a file check
+
+        end # END custom provisioner check
+end
+
 # Performs remote proxy configuration via the vagrant-proxyconf plugin
 # Params:
 # +config+:: The configuration we are working on
@@ -516,76 +727,7 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
     # Determine communication to use
     config.vm.communicator = userConfig[ "protocol" ]
     
-    %w( sh ps1 bat ).each do |extension|
-        
-        Dir.glob( [
-          File.join( ".", "deploy", "*.#{extension}" ),
-          File.join( ".", "deploy.*.#{extension}" ),
-          File.join( ".", "deploy.#{extension}" )
-        ] ) do |script_path|
-        
-            if File.exist?( script_path )
-    
-                config.push.define "local-exec" do |push|
-                    push.script = script_path
-                end
-            
-            end
-            
-        end
-    
-    end
-    
-    %w( env ini json yml yaml ).each do |extension|
-        
-        Dir.glob( [
-          File.join( ".", "deploy", "*.#{extension}" ),
-          File.join( ".", "deploy.*.#{extension}" ),
-          File.join( ".", "deploy.#{extension}" )
-        ] ) do |script_path|
-        
-            if File.exist?( script_path )
-    
-                # sane defaults before merging in
-                pushConfig = {
-                    "host"        => nil,
-                    "username"    => userConfig[ "sshUser" ],
-                    "password"    => nil,
-                    "secure"      => true,
-                    "destination" => ".",
-                    "source"      => "."
-                }.merge( load_file( script_path ) )
-        
-                if pushConfig[ "cmd" ].nil?
-            
-                    # no custom cmd so assume s/ftp
-                    config.push.define "ftp" do |push|
-                        push.host        = pushConfig[ "host"        ]
-                        push.username    = pushConfig[ "username"    ]
-                        push.password    = pushConfig[ "password"    ]
-                        push.secure      = pushConfig[ "secure"      ]
-                        push.destination = pushConfig[ "destination" ]
-                        push.source      = pushConfig[ "source"      ]
-                        #passive
-                        #exclude
-                        #include
-                    end
-                
-                else
-                
-                    # a cmd was specified, interpret it
-                    config.push.define "local-exec" do |push|
-                        push.inline = pushConfig[ "cmd" ] % pushConfig
-                    end
-                
-                end # END cmd not specified
-                
-            end # END config exists
-            
-        end # END glob
-    
-    end # END extension loop
-    
+    run_deployment( config, userConfig )
     
     ##############################################################
     # Proxy Setup
@@ -593,154 +735,13 @@ Vagrant.configure( VAGRANTFILE_API_VERSION ) do |config|
 
     ##############################################################
     # Setup
-    run_core_config( config, userConfig = {} )
+    run_core_config( config, userConfig )
     
+    # Machine / provider level setup
     config.vm.define userConfig[ "name" ] do |mybox|
-        
-        ##############################################################
-        # Configure
-        run_provider( mybox, userConfig )
 
-
-        ##############################################################
-        # Provision
-        
-        if userConfig[ "run" ].nil?
-
-            # No custom provisioner option passed in so check for file based existance
-            
-            # Keep track of which provision script we are matching
-            matched_once  = false
-            matched_every = false
-
-            %w( sh ps1 bat ).each do |extension|
-
-                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
-
-                # Provision using a local shell script if one exists
-                if File.exist?( script_path ) && !matched_once
-                    mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ]
-                    matched_once = true
-                end
-
-                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
-
-                if File.exist?( script_path ) && !matched_every
-                    mybox.vm.provision "shell", path: script_path,  privileged: userConfig[ "sudo" ], run: "always"
-                    matched_every = true
-                end
-
-            end # END shell provisioner determination
-
-            # Reset
-            matched_once  = false
-            matched_every = false
-
-            %w( pp ).each do |extension|
-
-                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
-
-                # Provision using puppet if exists
-                if File.exist?( script_path ) && !matched_once
-
-                    mybox.vm.provision :puppet do |puppet|
-                        puppet.manifests_path = File.dirname(  script_path )
-                        puppet.manifest_file  = File.basename( script_path )
-                    end
-
-                    matched_once = true
-                end
-
-                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
-
-                if File.exist?( script_path ) && !matched_every
-
-                    mybox.vm.provision :puppet, run: "always" do |puppet|
-                        puppet.manifests_path = File.dirname(  script_path )
-                        puppet.manifest_file  = File.basename( script_path )
-                    end
-
-                    matched_every = true
-                end
-
-            end # END puppet determination
-            
-            # Reset
-            matched_once  = false
-            matched_every = false
-
-            %w( yml yaml ).each do |extension|
-
-                script_path = File.join( ".", "provision", "shell", "run-once.#{extension}" )
-
-                # Provision using ansible_local if exists
-                if File.exist?( script_path ) && !matched_once
-
-                    mybox.vm.provision "ansible_local" do |ansible|
-                        ansible.playbook  = script_path
-                        ansible.sudo      = userConfig[ "sudo" ]
-                    end
-
-                    matched_once = true
-                end
-
-                script_path = File.join( ".", "provision", "shell", "run-every.#{extension}" )
-
-                if File.exist?( script_path ) && !matched_every
-
-                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
-                        ansible.playbook  = script_path
-                        ansible.sudo      = userConfig[ "sudo" ]
-                    end
-
-                    matched_every = true
-                end
-
-            end # END ansible provisioner determination
-
-        else
-
-            # A custom provisioner was passed in, see if we need to download it or just process it
-            
-            # Download the provisioning script if we have to
-            if userConfig[ "run" ].start_with?( "ftp://", "http://", "https://" )
-                userConfig[ "run" ] = downloadFile( userConfig[ "run" ], download_dir = "." )
-            end
-            
-            # Should have downloaded but check perhpas if its a string literal
-            if File.exist?( userConfig[ "run" ] )
-                
-                # Yml scripts generally indicate an ansible provisioner
-                if userConfig[ "run" ].end_with?( ".yml", ".yaml" )
-
-                    mybox.vm.provision "ansible_local", run: "always" do |ansible|
-                        ansible.playbook  = userConfig[ "run"  ]
-                        ansible.sudo      = userConfig[ "sudo" ]
-                    end
-                
-                elsif userConfig[ "run" ].end_with?( ".pp" )
-
-                    config.vm.provision :puppet do |puppet|
-                        puppet.manifests_path = File.dirname(  userConfig[ "run" ] )
-                        puppet.manifest_file  = File.basename( userConfig[ "run" ] )
-                        #puppet.module_path = "puppet/modules"
-                    end
-                    
-                elsif userConfig[ "run" ].end_with?( ".sh", ".bat", ".ps1" )
-                    
-                    # Shell scripts
-                    mybox.vm.provision "shell", path: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
-                    
-                end # END provisioner extension check
-
-            else
-                
-                # Run an inline shell command
-                mybox.vm.provision "shell", inline: userConfig[ "run" ], privileged: userConfig[ "sudo" ], run: "always"
-                
-            end # END provisioner is a file check
-
-        end # END custom provisioner check
+        run_provider(    mybox, userConfig )
+        run_provisioner( mybox, userConfig )
     
     end # END define
 
