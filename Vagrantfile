@@ -61,13 +61,16 @@ userConfig = {
 #########################################################################################
 
 def run_deployment( config, userConfig = {} )
+
+    # All supported shell script extensions
+    # call them if found.
     %w( sh ps1 bat ).each do |extension|
         
         Dir.glob( [
           File.join( ".", "deploy", "*.#{extension}" ),
           File.join( ".", "deploy.*.#{extension}" ),
           File.join( ".", "deploy.#{extension}" )
-        ] ) do |script_path|
+        ] ).sort do |script_path|
         
             if File.exist?( script_path )
     
@@ -87,7 +90,7 @@ def run_deployment( config, userConfig = {} )
           File.join( ".", "deploy", "*.#{extension}" ),
           File.join( ".", "deploy.*.#{extension}" ),
           File.join( ".", "deploy.#{extension}" )
-        ] ) do |script_path|
+        ] ).sort do |script_path|
         
             if File.exist?( script_path )
     
